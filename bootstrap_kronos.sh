@@ -4,11 +4,13 @@
 # 完成三件事：
 #   ① 克隆官方推理代码（shiyu-coder/Kronos，GitHub 不通时自动走 gitclone.com 镜像）
 #   ② 安装依赖（requirements.txt）
-#   ③ 双源获取权重（绕过 HF xet CDN）：模型走 Gitee AI，分词器走 GitCode AI
+#   ③ 获取权重：默认 base（最强开源版，经 hf-mirror.com / huggingface.co 完整镜像）；
+#      受限网络（仅 Gitee AI 可达）下 base 不可达，自动回退 Gitee AI 的 Kronos-small
 #
 # 重要：受限网络下 HF 官方 xet CDN（cas-bridge.xethub.hf.co）被防火墙拦截，
-#       故不能依赖运行时 from_pretrained 联网下载。本脚本用已验证可用的双源
-#       把权重落地到本地，之后推理全程离线（KRONOS_LOCAL_DIR）。
+#       故不能依赖运行时 from_pretrained 联网下载。本脚本把权重落地到本地，
+#       之后推理全程离线（KRONOS_LOCAL_DIR）。base 需 hf-mirror/HF 可达；
+#       若仅 Gitee 可达则自动改用 small（适配器随之降级到 small，不中断流程）。
 set -e
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
@@ -40,14 +42,25 @@ if [ -f "$VENDOR/requirements.txt" ]; then
   "$PY" -m pip install "huggingface_hub==1.4.0"
 fi
 
-# ---------- ③ 双源获取权重（绕过 xet CDN） ----------
-MODEL_W="$WEIGHTS/NeoQuasar--Kronos-small/model.safetensors"
+# ---------- ③ 获取权重（默认 base；受限网络回退 small） ----------
+MODEL_DIR="$WEIGHTS/NeoQuasar--Kronos-base"
+MODEL_W="$MODEL_DIR/model.safetensors"
 TOK_W="$WEIGHTS/NeoQuasar--Kronos-Tokenizer-base/model.safetensors"
 if [ -s "$MODEL_W" ] && [ -s "$TOK_W" ]; then
-  echo "权重已存在，跳过下载： $WEIGHTS"
+  echo "base 权重已存在，跳过下载： $MODEL_DIR"
+elif command -v "$PY" >/dev/null 2>&1; then
+  echo "下载 Kronos-base 权重（经 hf-mirror.com）..."
+  if "$PY" download_kronos_weights.py --repo NeoQuasar/Kronos-base \
+        --tokenizer NeoQuasar/Kronos-Tokenizer-base --out "$WEIGHTS"; then
+    echo "base 权重下载完成。"
+  else
+    echo "⚠️ base 经 hf-mirror 下载失败（网络受限？），回退 Gitee AI 的 Kronos-small ..."
+    "$PY" fetch_kronos_weights.py --out "$WEIGHTS"
+    export KRONOS_MODEL_REPO="NeoQuasar/Kronos-small"   # 与落地权重一致
+    MODEL_W="$WEIGHTS/NeoQuasar--Kronos-small/model.safetensors"
+  fi
 else
-  echo "双源获取 Kronos 权重（Gitee AI 模型 + GitCode AI 分词器）..."
-  "$PY" fetch_kronos_weights.py --out "$WEIGHTS"
+  echo "未找到 python，跳过权重下载（请手动运行 download_kronos_weights.py）"
 fi
 
 # ---------- ④ 校验权重可加载 ----------
@@ -56,7 +69,8 @@ echo "校验权重完整性（safetensors）..."
 import os, sys
 from safetensors import safe_open
 w = "_local_kronos_weights"
-for sub in ["NeoQuasar--Kronos-small", "NeoQuasar--Kronos-Tokenizer-base"]:
+repo = os.environ.get("KRONOS_MODEL_REPO", "NeoQuasar/Kronos-base").replace("/", "--")
+for sub in [repo, "NeoQuasar--Kronos-Tokenizer-base"]:
     p = os.path.join(w, sub, "model.safetensors")
     if not os.path.exists(p):
         print(f"  [缺失] {p}")

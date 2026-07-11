@@ -34,7 +34,11 @@ class PredictionGenerator:
         self.base_predict_weight = fusion.get("base_weights", {}).get("predict", 0.25)
         self.min_dir_acc = float(fusion.get("predict_min_dir_acc", 0.52))
         self.horizons = [1, 5, 10]
-        self.kronos = KronosAdapter()
+        # Kronos 模型尺寸：settings.yaml kronos.model_repo（默认 base）；
+        # 环境变量 KRONOS_MODEL_REPO 优先级最高（适配器内已处理）
+        kronos_cfg = self.cfg.get("kronos", {})
+        kronos_model_repo = kronos_cfg.get("model_repo")
+        self.kronos = KronosAdapter(model_repo=kronos_model_repo)
         self.darts = DartsAdapter()
         self.qlib = QlibAdapter(horizons=self.horizons)
 

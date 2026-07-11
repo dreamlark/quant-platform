@@ -1,9 +1,13 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Kronos 权重双源获取脚本（绕过 HF xet CDN，受限网络也能下）。
+"""Kronos 权重双源获取脚本 —— **Kronos-small 专用**（绕过 HF xet CDN，仅 Gitee AI 可达时）。
 
-为什么需要双源？
-  Kronos 推理必须同时有「模型权重」+「分词器权重」。但各国内镜像站覆盖不完整：
+⚠️ 平台默认模型已切换为 **Kronos-base**（最强开源版）。base / mini / large 在 Gitee AI
+**未镜像**（404），无法用本脚本下载。本脚本仅用于「网络受限、只有 Gitee AI 可达」时
+获取 **small** 权重作为兜底。要获取 base，请改用 ``download_kronos_weights.py``（hf-mirror）。
+
+为什么需要双源（仅 small）？
+  Kronos 推理必须同时有「模型权重」+「分词器权重」。各国内镜像站覆盖不完整：
     - Gitee AI (hf-api.gitee.com) 有模型权重（NeoQuasar/Kronos-small），可 curl 直连，
       是唯一实测能绕过 HF xet CDN 拉到 model.safetensors 的渠道；
     - Gitee AI 不含分词器；分词器在 GitCode AI (gitcode.com) 可匿名 git clone。
@@ -14,13 +18,15 @@
     NeoQuasar--Kronos-small/          config.json, model.safetensors, README.md
     NeoQuasar--Kronos-Tokenizer-base/ config.json, model.safetensors, README.md
 
-用法：
+用法（small 兜底）：
   python fetch_kronos_weights.py --out ./kronos_weights
   export KRONOS_LOCAL_DIR=$(pwd)/kronos_weights
+  export KRONOS_MODEL_REPO=NeoQuasar/Kronos-small   # 与落地权重一致
   # 之后 KronosAdapter 会用 local_files_only 从本地加载，无需联网
 
-备选（你的网络若直连 HF 正常）：
-  直接 pip 装好依赖后 from_pretrained("NeoQuasar/Kronos-small") 即可，本脚本可省略。
+默认 base 的离线获取（推荐）：
+  python download_kronos_weights.py --repo NeoQuasar/Kronos-base --out ./kronos_weights
+  export KRONOS_LOCAL_DIR=$(pwd)/kronos_weights
 """
 from __future__ import annotations
 

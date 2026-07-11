@@ -4,29 +4,40 @@
 
 1. **模型 id 纠偏**：旧版写死 ``microsoft/kronos``，该仓库在 HuggingFace / 镜像上**均不存在**
    （404）。真实 Kronos 是金融 K 线基础模型（作者 shiyu-coder，arXiv 2508.02739），HF id 为：
-     - 分词器：``NeoQuasar/Kronos-Tokenizer-base``
-     - 模型：``NeoQuasar/Kronos-small``（另有 -mini / -base）
+     - 分词器：``NeoQuasar/Kronos-Tokenizer-base``（base / small 共用）
+     - 模型：``NeoQuasar/Kronos-base``（**默认用最强的开源版 base**；另有 -small / -mini）
 2. **推理接口纠偏**：旧版把价格拼成文本 ``"series: ... -> next:"`` 喂给通用 AutoTokenizer，
    完全错误。真实 Kronos 用官方 ``model`` 包（``Kronos`` / ``KronosTokenizer`` /
    ``KronosPredictor``），吃 **OHLCV DataFrame + 时间戳**，自回归解码出未来 K 线，再逆归一化
    回价格尺度。
-3. **首选下载通道（2026-07-09 更新）**：经实测国内 5 大 HF 镜像站，
-   ``Gitee AI (hf-api.gitee.com)`` 是目前**唯一能在受限网络中完整下载 Kronos 模型权重**
-   （``model.safetensors ≈ 94MB``，32 秒完成）的通道。
-   默认端点优先级：Gitee AI > hf-mirror.com > HF 官方。可通过以下环境变量精细控制：
+3. **首选下载通道（2026-07-10 更新）**：经实测国内 5 大 HF 镜像站，端点按**模型尺寸**
+   自动分流（避免在某镜像上 404 后无脑回退）：
+
+   - ``Kronos-small``：``Gitee AI (hf-api.gitee.com)`` 已验证可完整下载
+     （``model.safetensors ≈ 24.7MB``，绕过 xet CDN，32 秒完成）。
+   - ``Kronos-base`` / ``-mini`` / ``-large``：Gitee AI **未镜像**（404），默认走
+     ``hf-mirror.com``（完整镜像 HF 官方全量权重）；HF 官方 ``huggingface.co`` 亦可。
+     base 权重 ``≈ 102.3MB``，small 的 ~4 倍，首拉略慢但推理质量更高。
+
+   默认端点优先级：``KRONOS_MODEL_ENDPOINT`` > 全局 ``KRONOS_HF_ENDPOINT`` > 按尺寸自动选。
+   分词器恒走 ``hf-mirror.com``（``Kronos-Tokenizer-base`` 在 Gitee AI 同样 404）。
+
+   精细控制环境变量：
 
    ============ ===================================== ================================
    环境变量           用途                              默认值
    ============ ===================================== ================================
-   KRONOS_HF_ENDPOINT 全局 HF 端点（模型+分词器统一）    ``https://hf-api.gitee.com``
-   KRONOS_MODEL_ENDPOINT 仅模型权重的下载端点            同上
-   KRONOS_TOK_ENDPOINT   仅分词器权重的下载端点           同上
+   KRONOS_HF_ENDPOINT 全局 HF 端点（模型+分词器统一）    按尺寸自动（small→Gitee / 其他→hf-mirror）
+   KRONOS_MODEL_ENDPOINT 仅模型权重的下载端点            同上（按尺寸自动）
+   KRONOS_TOK_ENDPOINT   仅分词器权重的下载端点           ``https://hf-mirror.com``
+   KRONOS_MODEL_REPO     覆盖模型 HF id（mini/small/base） ``NeoQuasar/Kronos-base``
+   KRONOS_TOK_REPO       覆盖分词器 HF id                  ``NeoQuasar/Kronos-Tokenizer-base``
    KRONOS_LOCAL_DIR      离线搬运目录（见第 5 点）        未设置（走在线）
    ============ ===================================== ================================
 
-   ⚠️ Gitee AI 当前仅镜像了 ``Kronos-small``（无 -base/-mini），且不含
-   ``Kronos-Tokenizer-base``。若分词器在 Gitee AI 上 404，适配器会自动回退到
-   ``hf-mirror.com``；若仍失败则降级 baseline。
+   ⚠️ **受限网络（如本沙箱）说明**：沙箱内仅 Gitee AI 可达，hf-mirror / HF 官方被网络策略
+   拦截。因此沙箱里 ``base`` 会因 hf-mirror 不可达而**优雅降级 baseline**（不崩溃、不卡流水线），
+   这是预期行为。在具备完整外网的本地电脑上，base 可经 hf-mirror.com / huggingface.co 正常拉取。
 4. **代码来源**：官方推理代码 vendor 在 ``_vendor/Kronos``（由 ``bootstrap_kronos.sh`` 获取），
    通过 ``sys.path`` 注入后 ``from model import ...``；缺失则 fail-fast 降级。
 5. **离线搬运**：若运行环境出网被拦，可在能出网的机器用 ``download_kronos_weights.py``
@@ -50,11 +61,25 @@ import pandas as pd
 
 from loguru import logger
 
-# ---- 国内镜像：Gitee AI (hf-api.gitee.com) 为首选（2026-07-09 实测可绕过 xet CDN）----
-#   优先级：KRONOS_HF_ENDPOINT > KRONOS_MODEL_ENDPOINT/TOK_ENDPOINT > 默认 Gitee AI
+# ---- 下载端点：按模型尺寸自动分流 ----
+#   - small 在 Gitee AI (hf-api.gitee.com) 已验证可完整下载（绕过 xet CDN）
+#   - base / mini / large 在 Gitee AI 未镜像（404），默认走 hf-mirror.com（完整镜像 HF 官方）
 _GLOBAL_EP = os.environ.get("KRONOS_HF_ENDPOINT") or os.environ.get("HF_ENDPOINT")
-_MODEL_EP_DEFAULT = "https://hf-api.gitee.com"  # Gitee AI: 模型权重已验证可下
-_TOK_EP_DEFAULT = "https://hf-mirror.com"       # hf-mirror: tokenizer 元数据完整
+_MODEL_EP_DEFAULT = "https://hf-api.gitee.com"      # small 专用（已验证）
+_MODEL_BASE_EP_DEFAULT = "https://hf-mirror.com"    # base/mini/large 专用（完整镜像）
+_TOK_EP_DEFAULT = "https://hf-mirror.com"           # hf-mirror: tokenizer 元数据完整
+
+
+def _default_model_endpoint(repo_id: str) -> str:
+    """按模型尺寸选择默认下载端点。
+
+    - ``Kronos-small`` -> Gitee AI（已验证可绕过 xet CDN 完整下载）
+    - ``Kronos-base`` / ``-mini`` / ``-large`` -> hf-mirror.com（Gitee AI 未镜像，会 404）
+    """
+    rid = (repo_id or "").rstrip("/")
+    if rid.endswith("Kronos-small"):
+        return _MODEL_EP_DEFAULT
+    return _MODEL_BASE_EP_DEFAULT
 
 if _GLOBAL_EP:
     os.environ.setdefault("HF_ENDPOINT", _GLOBAL_EP)
@@ -78,8 +103,8 @@ class KronosAdapter:
 
     name = "kronos"
     # 真实 HF id（旧版 microsoft/kronos 不存在）
-    _HF_TOKENIZER_REPO = "NeoQuasar/Kronos-Tokenizer-base"
-    _HF_MODEL_REPO = "NeoQuasar/Kronos-small"  # 可选 -mini / -base
+    _HF_TOKENIZER_REPO = "NeoQuasar/Kronos-Tokenizer-base"  # base/small 共用
+    _HF_MODEL_REPO = "NeoQuasar/Kronos-base"  # 默认最强开源版；可选 -small / -mini
 
     # Kronos 必需价格列；量能列可选（缺失补 0）
     _PRICE_COLS = ["open", "high", "low", "close"]
@@ -100,8 +125,15 @@ class KronosAdapter:
         self.horizon = horizon
         self.ctx_len = ctx_len
         self.sample_count = sample_count
-        self._model_repo = model_repo or self._HF_MODEL_REPO
-        self._tokenizer_repo = tokenizer_repo or self._HF_TOKENIZER_REPO
+        # 优先级：环境变量 KRONOS_MODEL_REPO > 构造参数 > 类默认（base）
+        self._model_repo = (
+            os.environ.get("KRONOS_MODEL_REPO") or model_repo or self._HF_MODEL_REPO
+        )
+        self._tokenizer_repo = (
+            os.environ.get("KRONOS_TOK_REPO")
+            or tokenizer_repo
+            or self._HF_TOKENIZER_REPO
+        )
         self._load_timeout = load_timeout
         self._model = None
         self._tokenizer = None
@@ -130,17 +162,13 @@ class KronosAdapter:
                     "运行 bootstrap_kronos.sh 获取；或设置 KRONOS_REPO_PATH）。当前降级 baseline。"
                 ) from exc
 
-            logger.info(
-                f"Kronos 权重加载（tokenizer={self._tokenizer_repo}, "
-                f"model={self._model_repo}，经 {os.environ.get('HF_ENDPOINT')}）..."
-            )
-
             def _resolve(repo_id: str, is_model: bool = True):
                 """根据仓库类型选择下载端点（模型 vs 分词器可独立配置）。
 
                 策略：
                   1. 若设了 KRONOS_LOCAL_DIR → 本地离线加载
-                  2. 模型权重优先用 Gitee AI（绕过 xet CDN），分词器用 hf-mirror
+                  2. 模型权重按尺寸分流（small→Gitee AI；base/mini/large→hf-mirror），
+                     分词器恒走 hf-mirror（Gitee AI 未镜像）
                   3. 用户可通过 KRONOS_MODEL_ENDPOINT / KRONOS_TOK_ENDPOINT 覆盖
                   4. 全局 KRONOS_HF_ENDPOINT / HF_ENDPOINT 作为最终兜底
                 """
@@ -155,12 +183,12 @@ class KronosAdapter:
                         f"KRONOS_LOCAL_DIR={local_root} 下未找到 {sub}，回退在线加载"
                     )
 
-                # 2) 选择端点：模型 / tokenizer 可独立指定
+                # 2) 选择端点：模型 / tokenizer 可独立指定；模型按尺寸自动分流
                 if is_model:
                     ep = (
                         os.environ.get("KRONOS_MODEL_ENDPOINT")
                         or _GLOBAL_EP
-                        or _MODEL_EP_DEFAULT
+                        or _default_model_endpoint(repo_id)
                     )
                 else:
                     ep = (
@@ -170,41 +198,45 @@ class KronosAdapter:
                     )
                 return repo_id, False, ep  # (repo, not_local, endpoint)
 
-            def _do():
+            logger.info(
+                f"Kronos 权重加载（tokenizer={self._tokenizer_repo}, "
+                f"model={self._model_repo}）..."
+            )
+            # 提前解析端点，确保日志与实际下载端点一致（base 走 hf-mirror，不再误显示 Gitee）
+            tok_repo, tok_local, tok_ep = _resolve(self._tokenizer_repo, is_model=False)
+            model_repo, model_local, model_ep = _resolve(self._model_repo, is_model=True)
+            logger.debug(
+                f"Kronos 端点：tokenizer={tok_ep or 'LOCAL:' + tok_repo}，"
+                f"model={model_ep or 'LOCAL:' + model_repo}"
+            )
+
+            def _do(tr, tl, te, mr, ml, me):
                 try:
-                    tok_repo, tok_local, tok_ep = _resolve(self._tokenizer_repo, is_model=False)
-                    model_repo, model_local, model_ep = _resolve(self._model_repo, is_model=True)
-
-                    # 临时切换端点（from_pretrained 读 HF_ENDPOINT / endpoint 参数）
                     old_ep = os.environ.get("HF_ENDPOINT")
-
                     # 加载分词器
-                    if not tok_local and tok_ep:
-                        os.environ["HF_ENDPOINT"] = tok_ep
-                    self._tokenizer = KronosTokenizer.from_pretrained(
-                        tok_repo, local_files_only=tok_local
-                    )
-
+                    if not tl and te:
+                        os.environ["HF_ENDPOINT"] = te
+                    self._tokenizer = KronosTokenizer.from_pretrained(tr, local_files_only=tl)
                     # 加载模型
-                    if not model_local and model_ep:
-                        os.environ["HF_ENDPOINT"] = model_ep
-                    self._model = Kronos.from_pretrained(
-                        model_repo, local_files_only=model_local
-                    )
-
+                    if not ml and me:
+                        os.environ["HF_ENDPOINT"] = me
+                    self._model = Kronos.from_pretrained(mr, local_files_only=ml)
                     # 恢复原端点
                     if old_ep is not None:
                         os.environ["HF_ENDPOINT"] = old_ep
                     elif "HF_ENDPOINT" in os.environ:
                         del os.environ["HF_ENDPOINT"]
-
                     self._predictor = KronosPredictor(
                         self._model, self._tokenizer, max_context=512
                     )
                 except Exception:  # noqa: BLE001
                     self._predictor = None  # 标记真实失败
 
-            th = threading.Thread(target=_do, daemon=True)
+            th = threading.Thread(
+                target=_do,
+                args=(tok_repo, tok_local, tok_ep, model_repo, model_local, model_ep),
+                daemon=True,
+            )
             th.start()
             th.join(self._load_timeout)
             if self._predictor is not None:

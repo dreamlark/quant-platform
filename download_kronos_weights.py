@@ -13,8 +13,9 @@
        pip install -U "huggingface_hub[cli]"
        export HF_ENDPOINT=https://hf-mirror.com        # 国内用镜像更快
        # 如需代理：export HTTPS_PROXY=http://127.0.0.1:7890
-       python download_kronos_weights.py --repo NeoQuasar/Kronos-small \
-              --tokenizer NeooQuasar/Kronos-Tokenizer-base \
+       # 默认拉 base（平台默认模型）；如需小模型加 --repo NeoQuasar/Kronos-small
+       python download_kronos_weights.py --repo NeoQuasar/Kronos-base \
+              --tokenizer NeoQuasar/Kronos-Tokenizer-base \
               --out ./kronos_weights
 
   2) 把 ./kronos_weights 整个目录拷到运行环境（U盘 / scp / 网盘均可）。
@@ -34,8 +35,8 @@ def _parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="下载 Kronos 权重到本地目录（离线搬运）")
     p.add_argument(
         "--repo",
-        default=os.environ.get("KRONOS_MODEL_REPO", "NeoQuasar/Kronos-small"),
-        help="模型仓库 id（默认 NeoQuasar/Kronos-small；可选 -mini / -base）",
+        default=os.environ.get("KRONOS_MODEL_REPO", "NeoQuasar/Kronos-base"),
+        help="模型仓库 id（默认 NeoQuasar/Kronos-base；可选 -small / -mini）",
     )
     p.add_argument(
         "--tokenizer",
