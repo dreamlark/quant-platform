@@ -1,0 +1,198 @@
+"""DuckDB 表结构定义（DDL + 元数据）。
+
+集中管理全库 schema，确保跨文件表结构一致（一致性审查项）。
+所有价格类因子/回测统一读取 ``adj_back_close``（后复权，P0-1）；
+``adj_front_close``（前复权）仅前端展示，严禁入计算。
+
+表清单（对齐架构文档 §3.1）：
+    daily_bars / factor_values / factor_health / signals / sector_rotation
+    predict_values / predict_health / universe / watchlist
+    daily_brief / stock_review / backtest_report
+"""
+from __future__ import annotations
+
+from typing import Dict, List
+
+# 含日期列的表（read/write 时做 datetime<->date 适配）
+DATE_COLUMNS: set[str] = {"date", "created_at"}
+
+# 表名 -> DDL
+TABLE_DDL: Dict[str, str] = {
+    "daily_bars": """
+        CREATE TABLE IF NOT EXISTS daily_bars (
+            code            VARCHAR,
+            date            DATE,
+            open            DOUBLE,
+            high            DOUBLE,
+            low             DOUBLE,
+            close           DOUBLE,
+            pre_close       DOUBLE,
+            adj_back_close  DOUBLE,   -- 后复权（计算/回测用，严禁用前复权）
+            adj_front_close DOUBLE,   -- 前复权（仅前端 K 线展示）
+            vol             DOUBLE,
+            amount          DOUBLE,
+            source          VARCHAR,
+            PRIMARY KEY (code, date)
+        );
+    """,
+    "factor_values": """
+        CREATE TABLE IF NOT EXISTS factor_values (
+            date         DATE,
+            code         VARCHAR,
+            factor_name  VARCHAR,
+            value        DOUBLE,
+            PRIMARY KEY (date, code, factor_name)
+        );
+    """,
+    "factor_health": """
+        CREATE TABLE IF NOT EXISTS factor_health (
+            factor_name  VARCHAR,
+            date         DATE,
+            ic           DOUBLE,
+            icir         DOUBLE,
+            rank_return  DOUBLE,
+            turnover     DOUBLE,
+            status       VARCHAR,   -- 有效 / 衰减 / 失效
+            weight       DOUBLE,
+            PRIMARY KEY (factor_name, date)
+        );
+    """,
+    "signals": """
+        CREATE TABLE IF NOT EXISTS signals (
+            date              DATE,
+            code              VARCHAR,
+            direction         INT,       -- 1 看多 / -1 看空 / 0 中性
+            confidence        DOUBLE,    -- 0~1，取自信号层而非 LLM
+            source_tags       VARCHAR,   -- 因子/技术/情绪/预测
+            factor_contrib    DOUBLE,    -- 已做行业/市值中性化（残差）
+            tech_contrib      DOUBLE,
+            sentiment_contrib DOUBLE,
+            predict_contrib   DOUBLE,
+            PRIMARY KEY (date, code)
+        );
+    """,
+    "sector_rotation": """
+        CREATE TABLE IF NOT EXISTS sector_rotation (
+            date            DATE,
+            sector_code     VARCHAR,
+            sector_name     VARCHAR,
+            change_pct      DOUBLE,
+            rs              DOUBLE,
+            net_inflow      DOUBLE,
+            rotation_signal VARCHAR,   -- 进攻 / 防御 / 切换
+            PRIMARY KEY (date, sector_code)
+        );
+    """,
+    "predict_values": """
+        CREATE TABLE IF NOT EXISTS predict_values (
+            code         VARCHAR,
+            date         DATE,
+            model_name   VARCHAR,
+            horizon      INT,        -- 1(次日)/5/10
+            dir_pred     INT,        -- 1 看多 / -1 看空 / 0 中性
+            ret_pred     DOUBLE,
+            lower        DOUBLE,
+            upper        DOUBLE,
+            dir_acc_hist DOUBLE,     -- 历史方向准确率（驱动融合权重）
+            PRIMARY KEY (code, date, model_name, horizon)
+        );
+    """,
+    "predict_health": """
+        CREATE TABLE IF NOT EXISTS predict_health (
+            model_name VARCHAR,
+            date       DATE,
+            mape       DOUBLE,
+            dir_acc    DOUBLE,
+            weight     DOUBLE,
+            PRIMARY KEY (model_name, date)
+        );
+    """,
+    "universe": """
+        CREATE TABLE IF NOT EXISTS universe (
+            date         DATE,
+            code         VARCHAR,
+            name         VARCHAR,
+            in_universe  BOOLEAN,   -- 标准可投资域（剔除 ST/次新/停牌后为 true）
+            is_st        BOOLEAN,
+            listed_days  INT,        -- 上市交易天数（次新过滤）
+            delisted     BOOLEAN,    -- 保留已退市用于样本
+            PRIMARY KEY (date, code)
+        );
+    """,
+    "watchlist": """
+        CREATE TABLE IF NOT EXISTS watchlist (
+            code        VARCHAR,
+            name        VARCHAR,
+            cost_price  DOUBLE,
+            shares      DOUBLE,
+            created_at  TIMESTAMP,
+            PRIMARY KEY (code)
+        );
+    """,
+    "daily_brief": """
+        CREATE TABLE IF NOT EXISTS daily_brief (
+            date             DATE,
+            content          VARCHAR,
+            market_temperature INT,
+            disclaimer       VARCHAR,
+            PRIMARY KEY (date)
+        );
+    """,
+    "stock_review": """
+        CREATE TABLE IF NOT EXISTS stock_review (
+            date       DATE,
+            code       VARCHAR,
+            content    VARCHAR,
+            action     VARCHAR,    -- 买入/卖出/持有（研究观点，非建议）
+            reason     VARCHAR,
+            confidence DOUBLE,     -- 取自信号层
+            disclaimer VARCHAR,
+            PRIMARY KEY (date, code)
+        );
+    """,
+    "backtest_report": """
+        CREATE TABLE IF NOT EXISTS backtest_report (
+            date         DATE,
+            strategy     VARCHAR,
+            metric_name  VARCHAR,
+            metric_value DOUBLE,
+            benchmark    VARCHAR,
+            sharpe       DOUBLE,
+            deflated_sharpe DOUBLE,
+            PRIMARY KEY (date, strategy, metric_name)
+        );
+    """,
+}
+
+# 表写入顺序（外键无强制约束，仅作落库/初始化顺序参考）
+TABLE_ORDER: List[str] = [
+    "daily_bars",
+    "universe",
+    "factor_values",
+    "factor_health",
+    "predict_values",
+    "predict_health",
+    "signals",
+    "sector_rotation",
+    "watchlist",
+    "daily_brief",
+    "stock_review",
+    "backtest_report",
+]
+
+
+def init_schema(con) -> None:
+    """在给定 DuckDB 连接上创建所有表（幂等）。
+
+    Args:
+        con: duckdb.DuckDBPyConnection 或 DuckDBClient 实例
+    """
+    # 兼容传入 DuckDBClient（其内部持有 con）
+    connection = getattr(con, "con", con)
+    for name in TABLE_ORDER:
+        connection.execute(TABLE_DDL[name])
+
+
+def all_tables() -> List[str]:
+    """返回全部表名。"""
+    return list(TABLE_ORDER)

@@ -1,0 +1,92 @@
+# =====================================================================
+# 因子定义（版本化，research-production parity）
+# 计算统一读取 adj_back_close（后复权）；前复权严禁入计算（P0-1）
+# formula 仅作文档说明；实际计算见 factors/qlib_factors.py 注册表（含回退实现）
+# =====================================================================
+version: "1.0.0"
+
+# direction: 1 表示因子值越大越看多；-1 表示因子值越大越看空
+factors:
+  - name: f_momentum_5
+    category: momentum
+    direction: 1
+    weight: 1.0
+    formula: "adj_back_close / adj_back_close.shift(5) - 1"
+    desc: "5 日动量"
+
+  - name: f_momentum_20
+    category: momentum
+    direction: 1
+    weight: 1.0
+    formula: "adj_back_close / adj_back_close.shift(20) - 1"
+    desc: "20 日动量"
+
+  - name: f_reversal_5
+    category: reversal
+    direction: -1
+    weight: 0.8
+    formula: "adj_back_close.shift(5) / adj_back_close - 1"
+    desc: "5 日反转（短期反转效应）"
+
+  - name: f_trend_60
+    category: trend
+    direction: 1
+    weight: 0.9
+    formula: "adj_back_close / adj_back_close.rolling(60).mean() - 1"
+    desc: "60 日均线乖离（趋势）"
+
+  - name: f_volatility_20
+    category: volatility
+    direction: -1
+    weight: 0.6
+    formula: "log(adj_back_close/adj_back_close.shift(1)).rolling(20).std()"
+    desc: "20 日收益波动率（越高越看空）"
+
+  - name: f_volume_ratio_20
+    category: volume
+    direction: 1
+    weight: 0.7
+    formula: "vol / vol.rolling(20).mean()"
+    desc: "量比（放量看多）"
+
+  - name: f_amount_growth_20
+    category: volume
+    direction: 1
+    weight: 0.6
+    formula: "amount / amount.rolling(20).mean() - 1"
+    desc: "成交额相对 20 日均量变化"
+
+  - name: f_amplitude_20
+    category: volatility
+    direction: -1
+    weight: 0.5
+    formula: "(high - low).rolling(20).mean() / adj_back_close"
+    desc: "20 日平均振幅（越高越看空）"
+
+  - name: f_rsi_14
+    category: tech
+    direction: 1
+    weight: 0.7
+    formula: "RSI(14) 相对强弱"
+    desc: "RSI（超卖反弹逻辑由 czsc 技术信号处理，此处作横截面强度）"
+
+  - name: f_high_low_pos_20
+    category: tech
+    direction: 1
+    weight: 0.7
+    formula: "(adj_back_close - low.rolling(20).min()) / (high.rolling(20).max() - low.rolling(20).min())"
+    desc: "20 日价格区间位置（越高越强）"
+
+  - name: f_breakout_60
+    category: breakout
+    direction: 1
+    weight: 0.8
+    formula: "adj_back_close / high.rolling(60).max() - 1"
+    desc: "60 日新高突破"
+
+  - name: f_turnover_trend
+    category: volume
+    direction: 1
+    weight: 0.5
+    formula: "vol.rolling(5).mean() / vol.rolling(20).mean() - 1"
+    desc: "量能趋势（近 5 日相对 20 日放量）"

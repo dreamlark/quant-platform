@@ -1,0 +1,43 @@
+2026-07-10 09:21:07.652 | INFO     | __main__:run_shard:71 - 分片 5/8：本片 37 只
+2026-07-10 09:21:09.361 | INFO     | factors.kronos_adapter:_load:133 - Kronos 权重加载（tokenizer=NeoQuasar/Kronos-Tokenizer-base, model=NeoQuasar/Kronos-small，经 https://hf-api.gitee.com）...
+2026-07-10 09:22:55.029 | DEBUG    | factors.prediction:_eval_heavy:371 - 重型模型 kronos：000166 完成（累计 1 只，15 样本）
+2026-07-10 09:24:45.731 | DEBUG    | factors.prediction:_eval_heavy:371 - 重型模型 kronos：000596 完成（累计 2 只，30 样本）
+2026-07-10 09:26:26.828 | DEBUG    | factors.prediction:_eval_heavy:371 - 重型模型 kronos：000768 完成（累计 3 只，45 样本）
+2026-07-10 09:28:18.525 | DEBUG    | factors.prediction:_eval_heavy:371 - 重型模型 kronos：000975 完成（累计 4 只，60 样本）
+2026-07-10 09:30:05.629 | DEBUG    | factors.prediction:_eval_heavy:371 - 重型模型 kronos：002001 完成（累计 5 只，75 样本）
+2026-07-10 09:31:53.925 | DEBUG    | factors.prediction:_eval_heavy:371 - 重型模型 kronos：002202 完成（累计 6 只，90 样本）
+2026-07-10 09:33:43.335 | DEBUG    | factors.prediction:_eval_heavy:371 - 重型模型 kronos：002371 完成（累计 7 只，105 样本）
+2026-07-10 09:35:34.126 | DEBUG    | factors.prediction:_eval_heavy:371 - 重型模型 kronos：002493 完成（累计 8 只，120 样本）
+2026-07-10 09:37:28.230 | DEBUG    | factors.prediction:_eval_heavy:371 - 重型模型 kronos：002709 完成（累计 9 只，135 样本）
+2026-07-10 09:39:22.231 | DEBUG    | factors.prediction:_eval_heavy:371 - 重型模型 kronos：300014 完成（累计 10 只，150 样本）
+2026-07-10 09:41:12.229 | DEBUG    | factors.prediction:_eval_heavy:371 - 重型模型 kronos：300308 完成（累计 11 只，165 样本）
+2026-07-10 09:43:02.325 | DEBUG    | factors.prediction:_eval_heavy:371 - 重型模型 kronos：300450 完成（累计 12 只，180 样本）
+2026-07-10 09:45:01.126 | DEBUG    | factors.prediction:_eval_heavy:371 - 重型模型 kronos：300803 完成（累计 13 只，195 样本）
+2026-07-10 09:46:49.724 | DEBUG    | factors.prediction:_eval_heavy:371 - 重型模型 kronos：301308 完成（累计 14 只，210 样本）
+2026-07-10 09:48:38.528 | DEBUG    | factors.prediction:_eval_heavy:371 - 重型模型 kronos：600018 完成（累计 15 只，225 样本）
+2026-07-10 09:50:21.324 | DEBUG    | factors.prediction:_eval_heavy:371 - 重型模型 kronos：600030 完成（累计 16 只，240 样本）
+2026-07-10 09:52:06.527 | DEBUG    | factors.prediction:_eval_heavy:371 - 重型模型 kronos：600085 完成（累计 17 只，255 样本）
+2026-07-10 09:53:58.224 | DEBUG    | factors.prediction:_eval_heavy:371 - 重型模型 kronos：600176 完成（累计 18 只，270 样本）
+2026-07-10 09:55:53.824 | DEBUG    | factors.prediction:_eval_heavy:371 - 重型模型 kronos：600309 完成（累计 19 只，285 样本）
+2026-07-10 09:57:38.735 | DEBUG    | factors.prediction:_eval_heavy:371 - 重型模型 kronos：600438 完成（累计 20 只，300 样本）
+2026-07-10 09:59:22.424 | DEBUG    | factors.prediction:_eval_heavy:371 - 重型模型 kronos：600549 完成（累计 21 只，315 样本）
+2026-07-10 10:01:17.130 | DEBUG    | factors.prediction:_eval_heavy:371 - 重型模型 kronos：600690 完成（累计 22 只，330 样本）
+2026-07-10 10:03:04.134 | DEBUG    | factors.prediction:_eval_heavy:371 - 重型模型 kronos：600886 完成（累计 23 只，345 样本）
+2026-07-10 10:04:47.230 | DEBUG    | factors.prediction:_eval_heavy:371 - 重型模型 kronos：600930 完成（累计 24 只，360 样本）
+2026-07-10 10:06:39.028 | DEBUG    | factors.prediction:_eval_heavy:371 - 重型模型 kronos：601012 完成（累计 25 只，375 样本）
+2026-07-10 10:08:30.235 | DEBUG    | factors.prediction:_eval_heavy:371 - 重型模型 kronos：601100 完成（累计 26 只，390 样本）
+2026-07-10 10:10:20.524 | DEBUG    | factors.prediction:_eval_heavy:371 - 重型模型 kronos：601186 完成（累计 27 只，405 样本）
+2026-07-10 10:12:12.031 | DEBUG    | factors.prediction:_eval_heavy:371 - 重型模型 kronos：601328 完成（累计 28 只，420 样本）
+2026-07-10 10:13:53.434 | DEBUG    | factors.prediction:_eval_heavy:371 - 重型模型 kronos：601601 完成（累计 29 只，435 样本）
+2026-07-10 10:15:38.230 | DEBUG    | factors.prediction:_eval_heavy:371 - 重型模型 kronos：601688 完成（累计 30 只，450 样本）
+2026-07-10 10:17:21.936 | DEBUG    | factors.prediction:_eval_heavy:371 - 重型模型 kronos：601816 完成（累计 31 只，465 样本）
+2026-07-10 10:19:11.626 | DEBUG    | factors.prediction:_eval_heavy:371 - 重型模型 kronos：601878 完成（累计 32 只，480 样本）
+2026-07-10 10:20:59.634 | DEBUG    | factors.prediction:_eval_heavy:371 - 重型模型 kronos：601939 完成（累计 33 只，495 样本）
+2026-07-10 10:22:47.827 | DEBUG    | factors.prediction:_eval_heavy:371 - 重型模型 kronos：603288 完成（累计 34 只，510 样本）
+2026-07-10 10:24:33.029 | DEBUG    | factors.prediction:_eval_heavy:371 - 重型模型 kronos：603993 完成（累计 35 只，525 样本）
+2026-07-10 10:26:19.628 | DEBUG    | factors.prediction:_eval_heavy:371 - 重型模型 kronos：688047 完成（累计 36 只，540 样本）
+2026-07-10 10:28:10.433 | DEBUG    | factors.prediction:_eval_heavy:371 - 重型模型 kronos：688271 完成（累计 37 只，555 样本）
+2026-07-10 10:28:10.525 | INFO     | __main__:run_shard:95 - 分片 5 完成：dir_acc=0.546 weight=0.023 pairs=555
+Loading weights from local directory
+Loading weights from local directory
+EXIT=0

@@ -1,0 +1,131 @@
+# =====================================================================
+# A 股日频量化分析平台 · 全局配置（配置驱动，禁止硬编码密钥）
+# =====================================================================
+app:
+  name: "A股日频量化分析平台"
+  version: "0.1.0"
+  analysis_first: true          # 只分析不交易
+  timezone: "Asia/Shanghai"
+
+paths:
+  data_dir: "./data"
+  market_db: "./data/market.duckdb"        # 行情库（日 K）
+  analytics_db: "./data/analytics.duckdb"  # 因子/信号/简报/回测库
+  raw_cache: "./data/raw_cache"            # 多源原始缓存（降级校验）
+
+# ---------------------------------------------------------------------
+# 数据源（纯免费多源冗余；mootdx/Tencent 主源防封）
+# ---------------------------------------------------------------------
+data_sources:
+  priority: ["mootdx", "akshare", "baostock"]
+  diff_threshold: 0.03          # 多源同标的价差超阈值 -> 告警并标记 source 可疑
+  cache_raw: true
+  # mootdx/Tencent 适配器参数（通达信 TCP 7709 永不封 IP）
+  mootdx:
+    market: "std"
+    bestip: true
+    timeout: 3.0
+  tencent:
+    enable: true
+
+# ---------------------------------------------------------------------
+# 复权方法学红线（P0-1）：因子/回测只读取 adj_back_close（后复权）
+# adj_front_close（前复权）仅前端展示，严禁入计算
+# ---------------------------------------------------------------------
+adjust:
+  back_method: "back"           # 后复权锚定最早时点
+  front_method: "front"         # 前复权仅展示
+  jump_detect: true             # 复权跳变检测告警
+
+# ---------------------------------------------------------------------
+# 可投资域（P0-3）：消除生存偏差
+# ---------------------------------------------------------------------
+universe:
+  min_listed_days: 60           # 上市 < 60 交易日视为次新剔除
+  suspend_max_days: 20          # 连续停牌 > 20 交易日视为长期停牌剔除
+  drop_st: true                 # 剔除 ST / *ST
+  keep_delisted: true           # 保留已退市用于样本
+
+# ---------------------------------------------------------------------
+# 因子 / 信号融合（四源：因子 + 技术 + 情绪 + 预测）
+# ---------------------------------------------------------------------
+factors:
+  config_file: "config/factors.yaml"
+  neutralization: true          # 融合前做行业/市值中性化（回归残差法）
+
+fusion:
+  # 四源基础权重（融合前归一化；实际权重再乘以各源健康度）
+  base_weights:
+    factor: 0.40
+    tech: 0.20
+    sentiment: 0.15
+    predict: 0.25
+  confidence_scale: 2.5         # |score| -> 置信度的 sigmoid 缩放
+  # 预测源：效果不佳经 predict_health 自动降权，不进核心权重
+  predict_min_dir_acc: 0.52
+  predict_experimental_below: 0.52
+
+# ---------------------------------------------------------------------
+# 因子体检（alphalens，懒加载；回退 pandas IC）
+# ---------------------------------------------------------------------
+health_check:
+  ic_window: 60                 # 滚动 IC 窗口（交易日）
+  valid_ic: 0.02                # |rank IC| 阈值
+  valid_icir: 0.5
+  decay_ic: 0.01                # 低于此视为衰减
+  fail_ic: 0.005                # 低于此视为失效 -> 自动降权
+
+# ---------------------------------------------------------------------
+# 情绪（P0-2）：v1 量价代理情绪（零额外源）
+# ---------------------------------------------------------------------
+sentiment:
+  window: 20
+  # 各微观结构指标权重
+  weights:
+    turnover_anomaly: 0.35
+    amplitude: 0.20
+    limit_up_rate: 0.20
+    return_skew: 0.25
+
+# ---------------------------------------------------------------------
+# 回测（F-14）：A 股制度 + walk-forward + 基准对照
+# ---------------------------------------------------------------------
+backtest:
+  initial_capital: 1000000.0
+  benchmark: ["zz_quan_zhi", "hs300"]   # 中证全指 / 沪深300（沙箱用等权代理）
+  walk_forward:
+    train_window: 250          # 滚动训练窗口（交易日）
+    test_window: 20            # 样本外测试窗口
+    step: 20
+  cost_model:
+    commission: 0.00025         # 双边佣金 万2.5
+    stamp_duty: 0.001           # 印花税 卖出千1
+    slippage_bps: 2.0           # 滑点 2bp
+    min_commission: 5.0         # 单笔最低佣金（元）
+    limit_up_pct: 0.10          # 涨停幅度（主板 10%）
+    limit_down_pct: 0.10        # 跌停幅度
+    t_plus_one: true            # T+1
+
+# ---------------------------------------------------------------------
+# LLM 洞察（DeepSeek V3 单模型）
+# ---------------------------------------------------------------------
+llm:
+  provider: "deepseek"
+  model: "${DEEPSEEK_MODEL:deepseek-chat}"
+  base_url: "${DEEPSEEK_BASE_URL:https://api.deepseek.com}"
+  api_key_env: "DEEPSEEK_API_KEY"
+  temperature: 0.3
+  max_tokens: 2048
+  cache_enabled: true
+  cache_ttl: 86400
+  # 合规红线（P2-4）：输出定位"研究观点/分析信号"，置信度取自信号层
+  disclaimer: "【免责声明】本平台内容仅为量化分析信号与研究观点，不构成任何证券买卖建议。投资有风险，决策需谨慎。"
+
+# ---------------------------------------------------------------------
+# 调度（盘后批处理，18:00 后）
+# ---------------------------------------------------------------------
+scheduler:
+  enabled: false
+  cron: "30 18 * * 1-5"         # 周一至周五 18:30
+  timezone: "Asia/Shanghai"
+  run_llm_after: "18:00"        # 避开 DeepSeek 峰谷 2x 定价

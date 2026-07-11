@@ -1,0 +1,60 @@
+[2026-07-10 09:43:00] 监控启动 (n_shards=8)
+[2026-07-10 09:43:13] alive_procs=16 total_pairs=1335 done_stocks=89/300
+[2026-07-10 09:44:26] alive_procs=17 total_pairs=1425 done_stocks=95/300
+[2026-07-10 09:45:38] alive_procs=17 total_pairs=1545 done_stocks=103/300
+[2026-07-10 09:46:51] alive_procs=17 total_pairs=1575 done_stocks=105/300
+[2026-07-10 09:48:03] alive_procs=17 total_pairs=1665 done_stocks=111/300
+[2026-07-10 09:49:15] alive_procs=17 total_pairs=1785 done_stocks=119/300
+[2026-07-10 09:50:28] alive_procs=17 total_pairs=1815 done_stocks=121/300
+[2026-07-10 09:51:41] alive_procs=17 total_pairs=1905 done_stocks=127/300
+[2026-07-10 09:52:53] alive_procs=17 total_pairs=2010 done_stocks=134/300
+[2026-07-10 09:54:04] alive_procs=16 total_pairs=2070 done_stocks=138/300
+[2026-07-10 09:55:17] alive_procs=16 total_pairs=2145 done_stocks=143/300
+[2026-07-10 09:56:28] alive_procs=16 total_pairs=2250 done_stocks=150/300
+[2026-07-10 09:57:41] alive_procs=16 total_pairs=2280 done_stocks=152/300
+[2026-07-10 09:58:53] alive_procs=16 total_pairs=2370 done_stocks=158/300
+[2026-07-10 10:00:06] alive_procs=16 total_pairs=2490 done_stocks=166/300
+[2026-07-10 10:01:19] alive_procs=16 total_pairs=2520 done_stocks=168/300
+[2026-07-10 10:02:32] alive_procs=16 total_pairs=2610 done_stocks=174/300
+[2026-07-10 10:03:45] alive_procs=16 total_pairs=2730 done_stocks=182/300
+[2026-07-10 10:04:57] alive_procs=16 total_pairs=2760 done_stocks=184/300
+[2026-07-10 10:06:09] alive_procs=16 total_pairs=2850 done_stocks=190/300
+[2026-07-10 10:07:22] alive_procs=16 total_pairs=2970 done_stocks=198/300
+[2026-07-10 10:08:34] alive_procs=16 total_pairs=3000 done_stocks=200/300
+[2026-07-10 10:09:47] alive_procs=16 total_pairs=3090 done_stocks=206/300
+[2026-07-10 10:11:00] alive_procs=16 total_pairs=3210 done_stocks=214/300
+[2026-07-10 10:12:13] alive_procs=16 total_pairs=3225 done_stocks=215/300
+[2026-07-10 10:13:26] alive_procs=16 total_pairs=3330 done_stocks=222/300
+[2026-07-10 10:14:38] alive_procs=16 total_pairs=3435 done_stocks=229/300
+[2026-07-10 10:15:50] alive_procs=16 total_pairs=3480 done_stocks=232/300
+[2026-07-10 10:17:03] alive_procs=16 total_pairs=3570 done_stocks=238/300
+[2026-07-10 10:18:16] alive_procs=16 total_pairs=3675 done_stocks=245/300
+[2026-07-10 10:19:29] alive_procs=16 total_pairs=3735 done_stocks=249/300
+[2026-07-10 10:20:41] alive_procs=16 total_pairs=3810 done_stocks=254/300
+[2026-07-10 10:21:53] alive_procs=16 total_pairs=3900 done_stocks=260/300
+[2026-07-10 10:23:04] alive_procs=16 total_pairs=3960 done_stocks=264/300
+[2026-07-10 10:24:18] alive_procs=16 total_pairs=4035 done_stocks=269/300
+[2026-07-10 10:25:30] alive_procs=16 total_pairs=4125 done_stocks=275/300
+[2026-07-10 10:26:42] alive_procs=16 total_pairs=4200 done_stocks=280/300
+[2026-07-10 10:27:54] alive_procs=16 total_pairs=4275 done_stocks=285/300
+[2026-07-10 10:28:56] alive_procs=8 total_pairs=4395 done_stocks=293/300
+[2026-07-10 10:29:57] alive_procs=1 total_pairs=4500 done_stocks=300/300
+[2026-07-10 10:30:57] alive_procs=1 total_pairs=4500 done_stocks=300/300
+[2026-07-10 10:31:58] alive_procs=1 total_pairs=4500 done_stocks=300/300
+[2026-07-10 10:32:58] alive_procs=1 total_pairs=4500 done_stocks=300/300
+[2026-07-10 10:33:59] alive_procs=1 total_pairs=4500 done_stocks=300/300
+[2026-07-10 10:34:59] alive_procs=1 total_pairs=4500 done_stocks=300/300
+[2026-07-10 10:36:00] alive_procs=1 total_pairs=4500 done_stocks=300/300
+[2026-07-10 10:37:00] alive_procs=1 total_pairs=4500 done_stocks=300/300
+[2026-07-10 10:38:01] alive_procs=1 total_pairs=4500 done_stocks=300/300
+[2026-07-10 10:39:01] alive_procs=0 total_pairs=4500 done_stocks=300/300
+[2026-07-10 10:39:01] 所有分片进程已退出，开始合并
+[2026-07-10 10:39:01] 运行合并...
+2026-07-10 10:39:03.325 | INFO     | __main__:run_merge:114 - 合并 300 只，4500 个方向样本对
+2026-07-10 10:39:03.326 | INFO     | __main__:run_merge:119 - 总 dir_acc（排除平盘）= 0.574  融合权重 = 0.037
+2026-07-10 10:39:03.326 | INFO     | __main__:run_merge:130 -   H1 dir_acc = 0.557  (有效样本 1500)
+2026-07-10 10:39:03.326 | INFO     | __main__:run_merge:130 -   H5 dir_acc = 0.641  (有效样本 1500)
+2026-07-10 10:39:03.327 | INFO     | __main__:run_merge:130 -   H10 dir_acc = 0.526  (有效样本 1500)
+2026-07-10 10:39:03.333 | INFO     | __main__:run_merge:144 - 已写回主 checkpoint：_kronos_eval_ckpt_kronos_e5_s0.json
+[2026-07-10 10:39:03] 生成最终报告...
+[2026-07-10 10:39:03] 完成

@@ -1,0 +1,34 @@
+# 运行时数据（gitignore）
+data/
+logs/
+*.duckdb
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+
+# 环境变量
+.env
+
+# 前端
+web/node_modules/
+web/dist/
+
+# 沙箱临时脚本 / 缓存 / 大权重（非源码，本地可重建；_run_real.py 是正式入口，保留）
+_eval_*.py
+_kronos_*.py
+_verify_*.py
+_probe_*.py
+_run_real_resume*.py
+_run_real_focused*.py
+_run_real_full*.py
+_run_real.log
+_run_*.log
+_*_cache.csv
+_local_kronos_weights/
+raw_cache/
+*.egg-info/
