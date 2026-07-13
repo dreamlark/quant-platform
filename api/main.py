@@ -15,7 +15,7 @@ if ROOT not in sys.path:
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from api.routers import dashboard, factors, sectors, stocks, watchlist
+from api.routers import admin, dashboard, factors, monitor, sectors, stocks, watchlist
 
 app = FastAPI(
     title="A 股日频量化分析平台 API",
@@ -37,6 +37,8 @@ app.include_router(factors.router)
 app.include_router(sectors.router)
 app.include_router(stocks.router)
 app.include_router(watchlist.router)
+app.include_router(admin.router)
+app.include_router(monitor.router)
 
 
 @app.get("/")

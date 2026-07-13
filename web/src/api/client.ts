@@ -72,3 +72,109 @@ export interface DashboardSummary {
   sectors: Sector[];
   watchlist_alerts: WatchItem[];
 }
+
+// 运维控制：更新/调度状态
+export interface UpdateStatus {
+  status: 'idle' | 'running' | 'success' | 'failed';
+  progress: number;        // 已完成步骤数
+  total: number;           // 总步骤数
+  current_step: string;    // 当前步骤名
+  started_at: string | null;
+  finished_at: string | null;
+  last_success_date: string | null; // 最近成功更新的目标日
+  last_error: string | null;
+  message: string;
+  auto_enabled: boolean;   // 自动运行是否开启
+  next_run: string | null; // 下次自动运行时间
+}
+
+// —— 运维控制端点 ——
+// 触发一轮数据更新与预测（异步；已在运行时返回 409）
+export function triggerUpdate() {
+  return api.post<{ status: string; message: string }>('/admin/update');
+}
+
+// 查询当前更新/调度状态
+export function getUpdateStatus() {
+  return api.get<UpdateStatus>('/admin/status');
+}
+
+// 开启 Web 可控的自动运行（工作日 18:30 自动更新）
+export function startAuto() {
+  return api.post<{ auto_enabled: boolean; next_run: string | null }>('/admin/auto/start');
+}
+
+// 关闭自动运行
+export function stopAuto() {
+  return api.post<{ auto_enabled: boolean }>('/admin/auto/stop');
+}
+
+// —— 运维监控（只读观测）——
+export interface DataStatus {
+  latest_date: string | null;
+  days_since: number | null;
+  is_stale: boolean;
+  stock_count: number | null;
+  universe_count: number | null;
+  error?: string;
+}
+
+export interface FactorHealthSummary {
+  latest_date: string | null;
+  total: number;
+  by_status: Record<string, number>;
+  avg_icir: number | null;
+  error?: string;
+}
+
+export interface ModelStatus {
+  model_name: string;
+  date: string;
+  dir_acc: number | null;
+  mape: number | null;
+  coverage_count: number | null;
+  error?: string;
+}
+
+export interface Freshness {
+  signals_date: string | null;
+  sector_date: string | null;
+  brief_date: string | null;
+  error?: string;
+}
+
+export interface RunRecord {
+  run_id: string;
+  trigger: string;
+  started_at: string;
+  finished_at: string;
+  duration_sec: number;
+  status: string;
+  target_date: string | null;
+  reached_step: string;
+  progress: number;
+  total: number;
+  error: string | null;
+}
+
+export interface MonitorOverview {
+  generated_at: string;
+  data: DataStatus;
+  factors: FactorHealthSummary;
+  models: ModelStatus[];
+  freshness: Freshness;
+  pipeline: UpdateStatus;
+  last_run: RunRecord | null;
+  auto: { enabled: boolean; next_run: string | null };
+  history_count: number;
+}
+
+// 运维总览（数据状态 + 健康度 + 模型状态 + 实时管线 + 最近一次运行）
+export function getMonitorOverview() {
+  return api.get<MonitorOverview>('/monitor/overview');
+}
+
+// 运行历史记录
+export function getMonitorHistory(limit = 50) {
+  return api.get<{ runs: RunRecord[] }>('/monitor/history', { params: { limit } });
+}

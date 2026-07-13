@@ -1,0 +1,154 @@
+"""运维监控（只读观测层）。
+
+聚合四类可观测信号，供「运维监控」页一次性拉取：
+- 数据状态：行情库最新交易日、距今天数、是否过期、股票/可投资域覆盖
+- 健康度：因子体检（有效/衰减/失效分布 + 平均 ICIR）、各预测模型（含 Kronos）dir_acc 与覆盖率
+- 管线运行：UpdateManager 实时状态机（当前跑到哪一步、进度）
+- 运行记录：持久化历史（JSONL），含成败/耗时/失败步骤/错误
+
+全部为只读查询，与更新写者解耦；任一库不可达时该分块降级为 error 字段，不影响其他分块。
+"""
+from __future__ import annotations
+
+import datetime as dt
+import os
+import sys
+
+from fastapi import APIRouter
+
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+if ROOT not in sys.path:
+    sys.path.insert(0, ROOT)
+
+from api.routers.admin import mgr  # noqa: E402  # 实时管线状态
+from api.run_store import load_runs  # noqa: E402
+
+router = APIRouter(prefix="/api/monitor", tags=["monitor"])
+
+MARKET = os.path.join(ROOT, "data", "market.duckdb")
+ANALYTICS = os.path.join(ROOT, "data", "analytics.duckdb")
+
+# 过期阈值（天）：>4 天可视作错过了一个以上交易日（覆盖周末）
+STALE_DAYS = 4
+
+
+def _ropen(path: str):
+    import duckdb
+
+    return duckdb.connect(path, read_only=True)
+
+
+def _data_status() -> dict:
+    try:
+        con = _ropen(MARKET)
+        row = con.execute("SELECT max(date), count(distinct code) FROM daily_bars").fetchone()
+        latest, n_codes = row[0], row[1]
+        u = con.execute(
+            "SELECT count(*) FROM universe WHERE in_universe=TRUE AND date=(SELECT max(date) FROM universe)"
+        ).fetchone()[0]
+        con.close()
+        days_since = (dt.date.today() - latest).days if latest else None
+        is_stale = bool(days_since is not None and days_since > STALE_DAYS)
+        return {
+            "latest_date": str(latest) if latest else None,
+            "days_since": days_since,
+            "is_stale": is_stale,
+            "stock_count": n_codes,
+            "universe_count": u,
+        }
+    except Exception as exc:  # noqa: BLE001
+        return {"error": f"{type(exc).__name__}: {exc}"}
+
+
+def _factor_health() -> dict:
+    try:
+        con = _ropen(ANALYTICS)
+        d = con.execute("SELECT max(date) FROM factor_health").fetchone()[0]
+        if not d:
+            con.close()
+            return {"latest_date": None, "total": 0, "by_status": {}, "avg_icir": None}
+        rows = con.execute(
+            f"SELECT status, count(*) FROM factor_health WHERE date=? GROUP BY status", [d]
+        ).fetchall()
+        avg = con.execute("SELECT avg(icir) FROM factor_health WHERE date=?", [d]).fetchone()[0]
+        con.close()
+        by_status = {s: c for s, c in rows}
+        return {
+            "latest_date": str(d),
+            "total": sum(by_status.values()),
+            "by_status": by_status,
+            "avg_icir": round(avg, 4) if avg is not None else None,
+        }
+    except Exception as exc:  # noqa: BLE001
+        return {"error": f"{type(exc).__name__}: {exc}"}
+
+
+def _model_status() -> list:
+    try:
+        con = _ropen(ANALYTICS)
+        # 各模型最新日期
+        ph = con.execute(
+            "SELECT model_name, max(date) FROM predict_health GROUP BY model_name"
+        ).fetchall()
+        out = []
+        for name, d in ph:
+            acc, mape = con.execute(
+                "SELECT dir_acc, mape FROM predict_health WHERE model_name=? AND date=?",
+                [name, d],
+            ).fetchone()
+            cov = con.execute(
+                "SELECT count(distinct code) FROM predict_values WHERE model_name=? AND date=?",
+                [name, d],
+            ).fetchone()[0]
+            out.append(
+                {
+                    "model_name": name,
+                    "date": str(d),
+                    "dir_acc": round(acc, 4) if acc is not None else None,
+                    "mape": round(mape, 4) if mape is not None else None,
+                    "coverage_count": cov,
+                }
+            )
+        con.close()
+        return out
+    except Exception as exc:  # noqa: BLE001
+        return [{"error": f"{type(exc).__name__}: {exc}"}]
+
+
+def _other_freshness() -> dict:
+    try:
+        con = _ropen(ANALYTICS)
+        sig = con.execute("SELECT max(date) FROM signals").fetchone()[0]
+        sec = con.execute("SELECT max(date) FROM sector_rotation").fetchone()[0]
+        brf = con.execute("SELECT max(date) FROM daily_brief").fetchone()[0]
+        con.close()
+        return {
+            "signals_date": str(sig) if sig else None,
+            "sector_date": str(sec) if sec else None,
+            "brief_date": str(brf) if brf else None,
+        }
+    except Exception as exc:  # noqa: BLE001
+        return {"error": f"{type(exc).__name__}: {exc}"}
+
+
+@router.get("/overview")
+def overview():
+    """运维总览：数据状态 + 健康度 + 模型状态 + 实时管线 + 最近一次运行。"""
+    runs = load_runs(1)
+    return {
+        "generated_at": dt.datetime.now().isoformat(timespec="seconds"),
+        "data": _data_status(),
+        "factors": _factor_health(),
+        "models": _model_status(),
+        "freshness": _other_freshness(),
+        "pipeline": mgr.state,
+        "last_run": runs[0] if runs else None,
+        "auto": {"enabled": mgr.state["auto_enabled"], "next_run": mgr.state["next_run"]},
+        "history_count": len(load_runs(1000)),
+    }
+
+
+@router.get("/history")
+def history(limit: int = 50):
+    """运行历史记录（最新在前）。"""
+    return {"runs": load_runs(limit)}

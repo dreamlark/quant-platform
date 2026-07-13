@@ -124,3 +124,44 @@
   - `/api/watchlist`：空（待用户添加持仓）
 - **修复 1**：`api/routers/stocks.py` 的 `search` 误用 `repo.analytics.read` 查 `universe` 表（universe 在 **market** 库）→ 改为 `repo.market.read`，搜索恢复。
 - **修复 2**：`fusion/sector.py:analyze` 仅按 `sectors.yaml` 样例映射板块 → 新增 `industry_map` 参数（真实申万一级行业），`orchestrator.step_sector` 优先用 `stock_list.industry`、回退 `fetch_industry_map()`；已为 2026-07-10 重新生成 26 个真实行业板块。
+
+### 6.3 Kronos 模型切换为 base（Request K：最强开源版）
+- `factors/kronos_adapter.py`：默认模型由 `Kronos-small` 改为 **`Kronos-base`**（约 102MB，官方示例 `prediction_cn_markets_day.py` 同款）；分词器仍共用 `Kronos-Tokenizer-base`。
+- **端点按尺寸自动分流**（关键）：small 走 Gitee AI（已验证绕过 xet CDN），base/mini/large 走 `hf-mirror.com`（Gitee 未镜像，会 404）。新增 `_default_model_endpoint(repo)`；`_resolve` 模型分支改用之。
+- **可配置化**：优先级 `KRONOS_MODEL_REPO` 环境变量 > `settings.yaml` 的 `kronos.model_repo` > 类默认 base；`factors/prediction.py` 读取 settings 传入 `KronosAdapter(model_repo=...)`。`config/settings.yaml` 新增 `kronos.model_repo: "NeoQuasar/Kronos-base"`。
+- **日志修正**：提前解析端点再打印，日志显示真实下载端点（base→hf-mirror），不再误显示 Gitee；线程内不再重复解析、去掉全局 env 改动的隐患。
+- **离线搬运脚本同步**：`download_kronos_weights.py` 默认 `--repo` 改 base（hf-mirror）；`bootstrap_kronos.sh` 默认下载 base，受限网络仅 Gitee 可达时回退 small 并自动 `export KRONOS_MODEL_REPO=small`；`fetch_kronos_weights.py` 明确为 small 专用回退；`KRONOS_WEIGHTS_GUIDE.md` 全量更新（base 默认、尺寸-端点表、base 离线命令）。
+- **验证**：单元回归 `tests/test_kronos_adapter.py` 全 PASS；`_default_model_endpoint` 对 small/base/mini/large 端点断言通过；base+stub 端到端接线 + 端点透传通过。沙箱内因 hf-mirror/HF 官方被网络策略拦截，base 会**优雅降级 baseline**（预期行为，不崩溃）；本地完整外网可正常拉取 base。
+
+### 6.4 自动更新 + Web 控制（Request P：断点续跑 + 运维按钮）
+- **问题**：原管线 `scheduler/orchestrator.py:run_daily` 是裸顺序 step 链，**无错误处理、无重试、无状态机**；前端 5 页全是纯展示，**没有任何触发更新的按钮**，后端也**无任何控制端点**（除 watchlist 增删）。
+- **新增后端控制面** `api/routers/admin.py`（前缀 `/api/admin`，与既有路由一致）：
+  - `UpdateManager`：① 后台**守护线程**异步跑更新，不阻塞 API；② 每步**失败自动重试 3 次**（指数退避 3/6/9s），整轮仍失败置 `failed`；③ **断点续跑**——各 step 幂等 upsert，重跑从断点补完（已落库数据不丢、不重复拉源），前端提示「可再次点击立即更新从断点续跑」；④ 状态机 `idle/running/success/failed` + 进度 `progress/total`。
+  - `_build_orch()` 复用 `_run_real.py` 的**沪深300域 + akshare 主源**逻辑（`index_stock_cons_csindex`，失败兜底 `universe` 表）；先 `step_ingest` 拉最新日K，再据 `max(date)` 定目标日并置 `orch.source=None`，后续步骤不再重复 ingest。
+  - **Web 可控自动运行**：API 进程内嵌 `BackgroundScheduler`（非 Blocking，不卡 API），cron 取自 `settings.yaml`（`scheduler.cron` 默认 `"30 18 * * 1-5"`，工作日 18:30，Asia/Shanghai），由 Web 开关启停；`next_run` 经 `job.next_run_time` 计算。
+  - 端点：`POST /api/admin/update`（运行中返回 409）、`GET /api/admin/status`、`POST /api/admin/auto/start`、`POST /api/admin/auto/stop`。
+- **接线**：`api/main.py` 新增 `from api.routers import admin` 并 `app.include_router(admin.router)`。
+- **前端适配** `web/src/api/client.ts` + `web/src/pages/Dashboard.tsx`：
+  - `client.ts` 新增 `UpdateStatus` 接口与 `triggerUpdate / getUpdateStatus / startAuto / stopAuto` 四个调用。
+  - `Dashboard.tsx` 顶部新增**运维控制卡片**：「立即更新」按钮（POST 后轮询状态）、「自动运行」Switch（POST start/stop 切换）、状态 Tag + `Progress`（steps=11）进度条、当前步骤/最近成功目标日/失败原因 Alert、操作后提示。更新中每 2s 轮询 `/api/admin/status`，结束自动停。
+- **验证**：① 后端 `py_compile` 通过；② 前端 `tsc && vite build` 通过（TS 校验新增类型与调用无误）；③ 进程内验证——4 个 `/api/admin/*` 路由均注册成功，`start_auto/stop_auto` 逻辑正确（`next_run` 算到下一个工作日 `2026-07-14T18:30:00+08:00`）。
+- **使用提示**：自动运行依赖 API 进程常驻（每次重启 `auto_enabled` 归位 False，需在 Web 上重新开启）。本地 Windows 部署见 `deploy_windows.bat`；手动单次跑见 `run_daily.bat`。
+
+### 6.5 运维监控层（Request：数据状态 / 健康度 / 模型状态 / 管线进度 + 运行记录）
+- **动机**：Request P 把更新改成后台异步跑后，缺少可见性——数据是否过期、Kronos 预测是否静默失败、自动运行凌晨失败为何，都无从得知。监控层 = 只读观测 + 运行历史持久化。
+- **新增后端**：
+  - `api/run_store.py`：运行历史 JSONL 追加写（`data/run_history.jsonl`）。选 JSONL 而非 DuckDB 表，避免与更新写者争单写锁；线程安全（锁保护）。
+  - `api/routers/monitor.py`（前缀 `/api/monitor`）：`MonitorService` 跨两库**只读**聚合——
+    - `data`：行情库 `daily_bars` 最新交易日 / 距今天数 / 是否过期（>4 天启发式）/ 股票数 / 可投资域数。
+    - `factors`：分析库 `factor_health` 按状态（有效/衰减/失效）分布 + 平均 ICIR。
+    - `models`：分析库 `predict_health`（含 Kronos）逐模型最新日 dir_acc / `predict_values` 覆盖率 / 日期。
+    - `freshness`：`signals`/`sector_rotation`/`daily_brief` 最新日。
+    - `pipeline`：直接引用 `admin.mgr.state`（实时跑到哪一步）。`last_run` + `history_count` 来自 JSONL。
+    - 端点：`GET /api/monitor/overview`（一次拉全）、`GET /api/monitor/history`。
+    - 每分块独立 try/except 降级（单库不可达仅该分块报 error，不影响其他）。
+  - `api/routers/admin.py` 扩展：`UpdateManager` 每次运行生成 `run_id`，`_worker` 结束后落一条历史（触发源 manual/auto、起止、耗时、状态、目标日、到达步骤、进度、错误）；自动调度触发源标 `auto`。
+- **前端**：新增 `web/src/pages/Monitor.tsx`（菜单「运维监控」+ 路由 `/monitor`）：
+  - 数据状态卡、因子健康卡、模型状态表（高亮 Kronos）、管线运行实时卡（复用 Progress steps + 状态 Tag）、其他数据新鲜度、运行记录表（时间/触发/状态/目标日/到达步骤/进度/耗时/错误）。
+  - 轮询：`overview` 每 4s、`history` 每 8s（观测层轻量只读）。
+- **接线**：`api/main.py` 注册 `monitor.router`；`client.ts` 新增 `MonitorOverview/RunRecord/...` 接口与 `getMonitorOverview/getMonitorHistory`。
+- **验证**：① 后端 `py_compile` 通过；② 前端 `tsc && vite build` 通过；③ 进程内实跑 `monitor.overview()` 返回真实数据（data=2026-07-10/新鲜/300 股；factors=12 因子 失效3·有效3·衰减6/avg_icir 0.1205；models kronos 0.632/覆盖300、qlib 0.416、baseline 0.512、darts 0.0；freshness 全 2026-07-10）；`append_run`+`load_runs` 联动正确；两路由注册成功。测试用历史记录已清理。
