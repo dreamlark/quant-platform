@@ -1,9 +1,10 @@
-# 运行时数据（gitignore）
+# ===== 运行时数据（不入库，可重跑生成）=====
 data/
-logs/
+raw_cache/
+local_cache/
 *.duckdb
 
-# Python
+# ===== Python =====
 __pycache__/
 *.py[cod]
 *.egg-info/
@@ -11,24 +12,42 @@ __pycache__/
 venv/
 .pytest_cache/
 
-# 环境变量
+# ===== 环境变量 =====
 .env
 
-# 前端
+# ===== 前端构建产物 =====
 web/node_modules/
 web/dist/
 
-# 沙箱临时脚本 / 缓存 / 大权重（非源码，本地可重建；_run_real.py 是正式入口，保留）
+# ===== 第三方 vendored 代码（由 bootstrap_kronos.sh / deploy_windows.bat 拉取，不入库）=====
+_vendor/
+
+# ===== 大权重（离线权重单独分发，不入库）=====
+_local_kronos_weights/
+
+# ===== 日志（全部）=====
+*.log
+_run_*.log
+
+# ===== 调试 / 探针 / 验证脚本（开发期，不入库）=====
 _eval_*.py
+_eval_*.sh
 _kronos_*.py
 _verify_*.py
+_verify_*.sh
 _probe_*.py
-_run_real_resume*.py
-_run_real_focused*.py
-_run_real_full*.py
-_run_real.log
-_run_*.log
+
+# ===== 调试报告 / 产物（开发期，不入库）=====
+_eval_*.txt
+_eval_*.md
+_kronos_eval_report.md
+_kronos_predictions.*
+_today_prediction.focused.md
+verify_*.md
+verify_verdict.json
 _*_cache.csv
-_local_kronos_weights/
-raw_cache/
-*.egg-info/
+
+# ===== 示例产物（有意保留入库，便于 clone 后直接查看平台输出结构）=====
+# _kronos_eval_ckpt_*.json  —— Kronos walk-forward 评估检查点（配权重可离线复用推理）
+# _today_prediction.md       —— 今日信号报告示例
+# 其余运行产物（_today_prediction.focused.md 等）仍不入库（见上方调试产物小节）
