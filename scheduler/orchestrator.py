@@ -18,6 +18,9 @@ from factors.factor_calc import FactorCalculator
 from factors.prediction import PredictionGenerator
 from factors.risk_neutral import RiskNeutralizer
 from factors.sentiment import SentimentExtractor
+from factors.market_sentiment import MarketSentiment
+from factors.text_sentiment import TextSentiment
+from sources.sentiment_data import fetch_all as fetch_sentiment_external
 from fusion.sector import SectorAnalyzer
 from fusion.signal_pool import SignalPool
 from llm.brief_gen import BriefGenerator
@@ -53,12 +56,15 @@ class Orchestrator:
         self.universe_filter = UniverseFilter(settings)
         self.factor_calc = FactorCalculator(settings)
         self.sentiment_ext = SentimentExtractor(settings)
+        self.market_sent = MarketSentiment(settings)
         self.predictor = PredictionGenerator(settings)
         self.health = FactorHealth(settings)
         self.neutralizer = RiskNeutralizer(settings)
         self.signal_pool = SignalPool(settings)
         self.sector_analyzer = SectorAnalyzer(settings)
         self.llm = LLMClient(settings)
+        # T3 文本情绪：复用 LLM 客户端（无密钥时门控降级）
+        self.text_sent = TextSentiment(settings, self.llm)
         self.brief_gen = BriefGenerator(self.llm, settings.get("llm", {}).get("disclaimer", ""))
         self.reviewer = StockReviewer(self.llm, settings.get("llm", {}).get("disclaimer", ""))
         self.wf = WalkForwardBacktester(settings)
@@ -220,6 +226,40 @@ class Orchestrator:
             self.repo.save_sector(sector)
         return sector
 
+    def step_market_sentiment(self, date: dt.date) -> pd.DataFrame:
+        """市场综合情绪指数（T1/T2）+ 文本情绪（T3，门控降级）。
+
+        T1/T2 五维分位合成 + GSISI + 华泰温度计择时，落库 ``sentiment_index``；
+        T3 LLM 文本情绪门控（无密钥/无新闻则跳过，仅日志）。外部数据按需 akshare
+        拉取，失败整体降级为空（仅量/价两维仍由本平台 bars 计算）。
+        """
+        bars = self.repo.load_bars(end=date)
+        uni = self.repo.load_universe(date, in_universe=True)
+        # 行业映射（与 step_sector 一致，供 GSISI 使用）
+        industry_map = None
+        if self.stock_list is not None and "industry" in self.stock_list.columns:
+            m = self.stock_list[["code", "industry"]].copy()
+            m["code"] = m["code"].astype(str).str.split(".").str[0]
+            m = m[m["industry"].astype(str).str.len() > 0]
+            if not m.empty:
+                industry_map = dict(zip(m["code"], m["industry"].astype(str)))
+        external: Dict = {}
+        try:
+            external = fetch_sentiment_external(self.settings)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(f"市场情绪：外部数据拉取失败（降级）：{exc}")
+        idx_df = self.market_sent.compute(
+            date, bars, external=external, industry_map=industry_map
+        )
+        if not idx_df.empty:
+            self.repo.save_sentiment_index(idx_df)
+        # T3 文本情绪（门控，不阻断核心链路）
+        try:
+            self.text_sent.analyze(date, uni["code"].tolist())
+        except Exception as exc:  # noqa: BLE001
+            logger.debug(f"市场情绪：文本情绪跳过：{exc}")
+        return idx_df
+
     def step_llm(self, date: dt.date) -> None:
         signals = self.repo.load_signals(date)
         sector = self.repo.load_sector(date)
@@ -302,6 +342,7 @@ class Orchestrator:
         self.step_neutralize(target_date)
         signals = self.step_fusion(target_date)
         self.step_sector(target_date)
+        self.step_market_sentiment(target_date)
         self.step_llm(target_date)
         self.step_backtest(target_date)
         return {"date": target_date, "signals": len(signals)}

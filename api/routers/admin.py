@@ -39,6 +39,7 @@ _STEPS = [
     ("neutralize", "中性化"),
     ("fusion", "四源融合"),
     ("sector", "板块轮动"),
+    ("market_sentiment", "市场情绪指数"),
     ("llm", "LLM简报"),
     ("backtest", "回测"),
 ]
@@ -116,6 +117,7 @@ class UpdateManager:
             "neutralize": lambda: orch.step_neutralize(today),
             "fusion": lambda: orch.step_fusion(today),
             "sector": lambda: orch.step_sector(today),
+            "market_sentiment": lambda: orch.step_market_sentiment(today),
             "llm": lambda: orch.step_llm(today),
             "backtest": lambda: orch.step_backtest(today),
         }

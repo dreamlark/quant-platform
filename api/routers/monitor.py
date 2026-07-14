@@ -131,6 +131,27 @@ def _other_freshness() -> dict:
         return {"error": f"{type(exc).__name__}: {exc}"}
 
 
+def _market_sentiment() -> dict:
+    """市场级综合情绪指数（sentiment_index 最新一行）。"""
+    try:
+        con = _ropen(ANALYTICS)
+        d = con.execute("SELECT max(date) FROM sentiment_index").fetchone()[0]
+        if not d:
+            con.close()
+            return {"latest_date": None, "available": False}
+        row = con.execute(
+            "SELECT * FROM sentiment_index WHERE date=?", [d]
+        ).fetchone()
+        cols = [c[0] for c in con.description] if con.description else []
+        con.close()
+        rec = dict(zip(cols, row)) if row else {}
+        rec["latest_date"] = str(d)
+        rec["available"] = True
+        return rec
+    except Exception as exc:  # noqa: BLE001
+        return {"available": False, "error": f"{type(exc).__name__}: {exc}"}
+
+
 @router.get("/overview")
 def overview():
     """运维总览：数据状态 + 健康度 + 模型状态 + 实时管线 + 最近一次运行。"""
@@ -141,6 +162,7 @@ def overview():
         "factors": _factor_health(),
         "models": _model_status(),
         "freshness": _other_freshness(),
+        "market_sentiment": _market_sentiment(),
         "pipeline": mgr.state,
         "last_run": runs[0] if runs else None,
         "auto": {"enabled": mgr.state["auto_enabled"], "next_run": mgr.state["next_run"]},

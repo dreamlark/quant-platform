@@ -7,7 +7,7 @@
 表清单（对齐架构文档 §3.1）：
     daily_bars / factor_values / factor_health / signals / sector_rotation
     predict_values / predict_health / universe / watchlist
-    daily_brief / stock_review / backtest_report
+    daily_brief / stock_review / backtest_report / sentiment_index
 """
 from __future__ import annotations
 
@@ -162,6 +162,22 @@ TABLE_DDL: Dict[str, str] = {
             PRIMARY KEY (date, strategy, metric_name)
         );
     """,
+    "sentiment_index": """
+        CREATE TABLE IF NOT EXISTS sentiment_index (
+            date            DATE,
+            index_value     DOUBLE,    -- 市场情绪综合指数 0~100
+            sub_volume      DOUBLE,    -- 量能分维度
+            sub_price       DOUBLE,    -- 价格分维度
+            sub_money       DOUBLE,    -- 资金分维度
+            sub_valuation   DOUBLE,    -- 估值分维度
+            sub_riskpremium DOUBLE,    -- 风险溢价分维度
+            gsisi           DOUBLE,    -- 高 Beta 行业轮动强度
+            regime          VARCHAR,   -- 恐惧 / 中性 / 贪婪
+            thermometer     DOUBLE,    -- 华泰温度计 0~100
+            signal          VARCHAR,   -- 买入 / 半仓 / 空仓
+            PRIMARY KEY (date)
+        );
+    """,
 }
 
 # 表写入顺序（外键无强制约束，仅作落库/初始化顺序参考）
@@ -178,6 +194,7 @@ TABLE_ORDER: List[str] = [
     "daily_brief",
     "stock_review",
     "backtest_report",
+    "sentiment_index",
 ]
 
 

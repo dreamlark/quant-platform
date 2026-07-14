@@ -76,7 +76,7 @@
 | **可投资域**（P0-3） | `sources/universe.py` 剔除 ST/*ST、次新<60 日、长期停牌；保留已退市样本，消除生存偏差 |
 | **研究观点非建议**（P2-4） | LLM 输出定位"分析信号 / 研究观点"，置信度取自信号层；全站挂固定免责声明 |
 | **walk-forward**（P1-2/3） | `backtest/walk_forward.py` 滚动样本外 + 中证全指 / 沪深300 基准 + Deflated Sharpe |
-| **情绪第 4 源**（P0-2） | `factors/sentiment.py` 量价代理情绪（零额外源） |
+| **情绪第 4 源**（P0-2） | `factors/sentiment.py`（T0 量价代理：换手异常/振幅/涨停率/收益偏度/breadth_rank/相对强度）+ `factors/market_sentiment.py`（T1 五维分位综合指数 / T2 温度计择时 / GSISI 行业 Beta 轮动）+ `factors/text_sentiment.py`（T3 LLM 文本情绪，门控降级） |
 | **风险中性化**（P1-4） | `factors/risk_neutral.py` 行业 / 市值回归残差法，融合前执行 |
 | **A 股回测制度**（P1-1） | `backtest/cost_model.py` 佣金万 2.5 / 印花税千 1 / 滑点 / T+1 / 涨跌停流动性约束 |
 
@@ -99,7 +99,7 @@
 │            无计算、不写分析库（单写者约束）                    │
 ├──────────────────────────────────────────────────────────────┤
 │ L4 编排层   scheduler/ (Orchestrator + Jobs)                  │
-│            run_daily(11 步) 串行编排；Jobs 接 APScheduler     │
+│            run_daily(12 步) 串行编排；Jobs 接 APScheduler     │
 │            cron 触发；是唯一合法「写分析库」入口               │
 ├──────────────────────────────────────────────────────────────┤
 │ L3 计算层   factors/ fusion/ evaluation/ backtest/ llm/       │
@@ -120,7 +120,7 @@
 |----|------|------|----------|
 | L6 展示 | `web/` | 暗色看板、图表、交互 | 无业务逻辑，仅调 API |
 | L5 接口 | `api/` | 只读聚合、响应模型 | **禁止写** analytics 库 |
-| L4 编排 | `scheduler/` | 11 步流水线、调度 | 唯一写分析库入口；无顶层 try（任一步错即停） |
+| L4 编排 | `scheduler/` | 12 步流水线、调度 | 唯一写分析库入口；无顶层 try（任一步错即停） |
 | L3 计算 | `factors/ fusion/ evaluation/ backtest/ llm/` | 信号/融合/体检/回测/简报 | 纯函数式，依赖 storage 读写 |
 | L2 存储 | `storage/` | DuckDB 封装、UPSERT、幂等建表 | 单一连接；后复权为计算基准 |
 | L1 数据 | `sources/` | 行情拉取、复权、universe | 冗余三级（mootdx→akshare→baostock），懒加载降级 |
@@ -140,14 +140,14 @@
                                                                      │
                         ┌────────────────────────────────────────────┘
                         ▼                      ▼                    ▼
-                  sector(板块轮动)      llm(简报/简评)        backtest(walk-forward)
+         sector(板块轮动)  market_sentiment(市场情绪)  llm(简报/简评)  backtest(walk-forward)
                         │                      │                    │
                         └──────────────────────┴────────────────────┘
                                        ▼
                               analytics.duckdb (全部结果)
 ```
 
-> 步骤顺序（`scheduler/orchestrator.py`）：`step_ingest → universe → factors → sentiment → predict → health → neutralize → fusion → sector → llm → backtest`。任一步异常会中止整轮（无顶层 try/except），需在 `run_store.jsonl` 查看到达步骤与错误。
+> 步骤顺序（`scheduler/orchestrator.py`）：`step_ingest → universe → factors → sentiment → predict → health → neutralize → fusion → sector → market_sentiment → llm → backtest`（共 12 步）。任一步异常会中止整轮（无顶层 try/except），需在 `run_store.jsonl` 查看到达步骤与错误。
 
 ### 4.2 实时服务 / 请求数据流
 
@@ -223,7 +223,7 @@ _run_real.py ──▶ scheduler.orchestrator
 
 ## 5. 目录结构与逐文件作用
 
-### 5.1 完整目录树（已入库 99 文件）
+### 5.1 完整目录树（已入库 105 文件）
 
 ```
 quant-platform/
@@ -240,6 +240,7 @@ quant-platform/
 ├── README.md                    # 本文件
 ├── KRONOS_WEIGHTS_GUIDE.md      # Kronos 权重获取与离线部署指南
 ├── _completion_assessment.md    # 完成度评估（产物说明）
+├── docs/                         # 设计文档（含情绪框架 PRD：sentiment_framework_prd.md）
 ├── _today_prediction.md         # ★ 示例产物：最近一次信号报告（入库作样例）
 ├── _kronos_eval_ckpt_*.json     # ★ 示例产物：预测评估检查点（入库作样例）
 ├── api/                         # L5 接口层（FastAPI，只读服务）
@@ -329,10 +330,12 @@ quant-platform/
 | `factors/qlib_factors.py` | qlib 因子（缺失时 pandas 兜底） |
 | `factors/kronos_adapter.py` | Kronos 适配：离线/在线权重、端点分流（按尺寸自动） |
 | `factors/darts_adapter.py` | Darts 预测适配（可选，A 股日收益近白噪声，已知塌缩为 0） |
-| `factors/qlib_predict_adapter.py` | qlib 预测适配（缺失时 pandas+xgboost 兜底） |
+| `factors/qlib_predict_adapter.py` | qlib 预测适配：复刻 Alpha158 特征（pandas），sklearn-API 模型动物园（xgb/lgbm/catb/histgb/gbr/rf/et/ridge）按 walk-forward 方向准确率自动选优；缺失时 pandas+xgboost 兜底 |
 | `factors/prediction.py` | 预测编排 + walk-forward 评估 + 检查点续跑（`KRONOS_N_EVAL_DATES` 控制） |
 | `factors/risk_neutral.py` | 行业 / 市值中性化（去风格暴露） |
-| `factors/sentiment.py` | 量价代理情绪（换手异常/振幅/涨停率/收益偏度） |
+| `factors/sentiment.py` | 量价代理情绪（T0 扩展：换手异常/振幅/涨停率/收益偏度 + breadth_rank 横截面分位 + relative_strength 相对强度） |
+| `factors/market_sentiment.py` | 市场级综合情绪指数（T1 五维分位合成：量/价/资金/估值/风险溢价 + T2 华泰温度计择时 + GSISI 行业 Beta 轮动） |
+| `factors/text_sentiment.py` | LLM 文本情绪（T3：对财经新闻做语义打分，门控——无 key/无新闻降级） |
 | `factors/czsc_signals.py` | 缠论笔段信号（依赖 czsc，懒加载） |
 
 #### 5.3.6 `fusion/`
@@ -358,7 +361,7 @@ quant-platform/
 
 | 文件 | 作用 |
 |------|------|
-| `scheduler/orchestrator.py` | ★ 每日盘后编排：`run_daily(11 步)` 串行流水线 |
+| `scheduler/orchestrator.py` | ★ 每日盘后编排：`run_daily(12 步)` 串行流水线（含 `step_market_sentiment`） |
 | `scheduler/jobs.py` | APScheduler 定时任务（cron 触发 `run_daily`，生产部署用） |
 
 #### 5.3.9 `sources/`（数据源层）
@@ -372,6 +375,7 @@ quant-platform/
 | `sources/adjust.py` | 复权计算（后复权锚定最早，前复权仅展示） |
 | `sources/universe.py` | 可投资域过滤（剔 ST / 次新 / 长期停牌，消生存偏差） |
 | `sources/market_meta.py` | 行业 / 市值元数据（中性化与板块用） |
+| `sources/sentiment_data.py` | 情绪外部数据层（akshare 多源：融资融券/北向/指数估值/10Y 国债/ETF 净流/新闻；本地缓存 + 失败降级） |
 | `sources/_sw_industry_cache.json` | 申万行业映射缓存（本地，免重复拉取） |
 
 #### 5.3.10 `storage/`（存储层）
@@ -379,8 +383,8 @@ quant-platform/
 | 文件 | 作用 |
 |------|------|
 | `storage/duckdb_client.py` | DuckDB 连接 / 读写 / upsert 封装（单一连接，幂等建表） |
-| `storage/repository.py` | 仓储层：业务读写接口（计算层统一经此访问 DB） |
-| `storage/schema.py` | 全库 DDL + 元数据（集中管理表结构一致，`adj_back_close` 为计算基准） |
+| `storage/repository.py` | 仓储层：业务读写接口（含 `save/load_sentiment_index` 等 CRUD，计算层统一经此访问 DB） |
+| `storage/schema.py` | 全库 DDL + 元数据（集中管理表结构一致；13 张表含 `sentiment_index`，`adj_back_close` 为计算基准） |
 
 #### 5.3.11 `backtest/`
 
@@ -403,6 +407,8 @@ quant-platform/
 | `tests/test_fe_constraints.py` | 前端约束测试（暗色/简体中文/无外部依赖） |
 | `tests/test_kronos_adapter.py` | Kronos 适配器单测（离线/在线解析） |
 | `tests/test_prediction_kronos_integration.py` | 预测+Kronos 集成测试 |
+| `tests/test_sentiment_t0.py` | T0 量价代理情绪单测（形状/范围/组件/无前视） |
+| `tests/test_market_sentiment.py` | 市场级综合情绪指数单测（五维合成/GSISI/无前视/外部数据） |
 | `tests/_dbg_kronos_load.py` | 调试：Kronos 权重加载 |
 | `tests/_smoke_kronos_live.py` | 调试：Kronos 实跑冒烟 |
 | `tests/stub_model/model/__init__.py` | 测试桩模型（模拟预测源） |
@@ -427,7 +433,7 @@ quant-platform/
 | `web/src/pages/Sectors.tsx` | 板块轮动页 |
 | `web/src/pages/Stocks.tsx` | 个股详情页（K线/简评/搜索） |
 | `web/src/pages/Watchlist.tsx` | 自选股页 |
-| `web/src/pages/Monitor.tsx` | 运维监控页（数据/因子/模型/管线状态） |
+| `web/src/pages/Monitor.tsx` | 运维监控页（数据/因子/模型/管线状态/市场情绪指数卡片） |
 
 ---
 
@@ -638,6 +644,25 @@ pnpm build && pnpm preview
 | `sentiment.weights.limit_up_rate` | `0.20` | 涨停率权重 |
 | `sentiment.weights.return_skew` | `0.25` | 收益偏度权重 |
 
+**`market_sentiment`（市场级综合情绪，T1/T2/T3）**
+
+| 键 | 默认 | 作用 |
+|----|------|------|
+| `market_sentiment.percentile_window` | `750` | 五维分位滚动窗口（交易日，约 3 年）；样本不足回退中性 50 |
+| `market_sentiment.dim_weights.volume` | `0.25` | 量能分维度权重（上涨成交额占比，由本平台 bars 算） |
+| `market_sentiment.dim_weights.price` | `0.25` | 价格分维度权重（上涨家数占比，由本平台 bars 算） |
+| `market_sentiment.dim_weights.money` | `0.20` | 资金分维度权重（融资净买/北向净买/ETF 净流 z 值求和） |
+| `market_sentiment.dim_weights.valuation` | `0.15` | 估值分维度权重（指数 PE 历史分位） |
+| `market_sentiment.dim_weights.riskpremium` | `0.15` | 风险溢价分维度权重（盈利收益率 − 10Y 国债） |
+| `market_sentiment.thermometer.fear` | `30` | 综合指数 ≤ 此值 → 恐惧 |
+| `market_sentiment.thermometer.greed` | `70` | 综合指数 ≥ 此值 → 贪婪 |
+| `market_sentiment.thermometer.buy` | `10` | 综合指数 ≤ 此值 → 买入信号 |
+| `market_sentiment.thermometer.empty` | `90` | 综合指数 ≥ 此值 → 空仓信号 |
+| `market_sentiment.gsisi_window` | `60` | GSISI 行业 Beta 估计窗口（交易日） |
+| `market_sentiment.gsisi_weeks` | `8` | GSISI 取最近 N 周行业周收益与 Beta 排序相关性 |
+
+> 缺失维度自动剔除后权重归一化；量/价两维仅依赖本平台 bars，外部数据（资金/估值/利率/新闻）缺失时整体降级为空，不阻断核心链路。
+
 **`backtest`**
 
 | 键 | 默认 | 作用 |
@@ -686,7 +711,7 @@ python _run_real.py
 1. 取沪深300 成分（akshare，带 30s 超时 + 本地缓存 + universe 表三级兜底）
 2. 取行业 / 市值元数据（中性化用）
 3. `step_ingest`：拉取截至今日的日 K（akshare 新浪财经），幂等 upsert 入 `market.duckdb`
-4. `run_daily(TARGET)`：跑完整 11 步流水线（universe→因子→情绪→预测→体检→中性化→融合→板块→LLM→回测）
+4. `run_daily(TARGET)`：跑完整 12 步流水线（universe→因子→情绪→预测→体检→中性化→融合→板块→市场情绪→LLM→回测）
 5. 写出 `_today_prediction.md`（中文信号报告）
 
 预期产出（最新一次实跑，TARGET=2026-07-10）：看多 127 / 看空 142 / 中性 31；Kronos-small dir_acc≈0.632，唯一有效预测源。
@@ -775,13 +800,13 @@ python _run_real.py
 | 模块 | 职责 |
 |------|------|
 | `api/routers/admin.py` | `UpdateManager`：后台线程触发更新；3 次指数退避重试；幂等 upsert 断点续跑；`BackgroundScheduler` 支持 Web 切换自动运行；运行历史写入 JSONL |
-| `api/routers/monitor.py` | `MonitorService`：跨库只读聚合（数据状态 / 因子健康 / 模型状态 / 管线进度 / 运行历史） |
+| `api/routers/monitor.py` | `MonitorService`：跨库只读聚合（数据状态 / 因子健康 / 模型状态 / 管线进度 / 运行历史 / 市场情绪指数） |
 | `api/run_store.py` | 运行历史 JSONL 读写（规避 DuckDB 单写者锁） |
 
 ### 11.2 Web UI
 
-- **Dashboard 页「运维控制」卡片**：立即更新按钮（轮询进度）+ 自动运行开关 + 进度条（11 步）+ 当前步 / 上次成功日 / 失败告警。
-- **Monitor 页（新增 `/monitor`）**：数据状态卡、因子健康卡、模型状态表（Kronos 高亮）、管线实时进度、运行历史表。每 4s / 8s 轮询。
+- **Dashboard 页「运维控制」卡片**：立即更新按钮（轮询进度）+ 自动运行开关 + 进度条（12 步）+ 当前步 / 上次成功日 / 失败告警。
+- **Monitor 页（新增 `/monitor`）**：数据状态卡、因子健康卡、模型状态表（Kronos 高亮）、管线实时进度、运行历史表、**市场情绪指数卡**（综合指数/温度计/GSISI/五维分位进度条）。每 4s / 8s 轮询。
 
 ### 11.3 状态判定
 
@@ -830,7 +855,7 @@ python _run_real.py
 | GET | `/api/admin/status` | 更新状态 / 进度 |
 | POST | `/api/admin/auto/start` | 启动自动运行调度 |
 | POST | `/api/admin/auto/stop` | 停止自动运行调度 |
-| GET | `/api/monitor/overview` | 运维总览（数据/因子/模型/管线） |
+| GET | `/api/monitor/overview` | 运维总览（数据/因子/模型/管线/市场情绪） |
 | GET | `/api/monitor/history` | 运行历史 |
 
 ---
@@ -847,6 +872,7 @@ python _run_real.py
 | **Kronos base 离线** | 受限 | 沙箱无外网取 base；需 `KRONOS_MODEL_REPO=small` 用本地权重（见 §10.3） |
 | **数据截止** | 取决于 akshare | 盘中或未收盘日，库内最新为最近已收盘交易日 |
 | **analysis-only** | 设计如此 | 无下单 / 券商接口，纯研究信号 |
+| **市场情绪外部数据** | 缺失可降级 | 融资/北向/估值/10Y 国债/ETF 流接口失败或不可达时，综合指数退化为仅量/价两维；T3 LLM 文本情绪无 key/无新闻自动跳过 |
 
 ---
 
@@ -889,7 +915,7 @@ A：改 `_run_real.py` 的 `stock_list` 来源为全市场代码（如 `D:\DMYY\
 ### 16.2 加一个信号源
 
 - 预测源：实现 `factors/*_adapter.py` 的 `predict()` 接口，在 `factors/prediction.py` 的 `self.models` 列表注册；walk-forward 自动评估并赋权。
-- 技术 / 情绪：扩展 `factors/czsc_signals.py` / `factors/sentiment.py`，输出 `tech_score` / `sentiment_score`。
+- 技术 / 情绪：扩展 `factors/czsc_signals.py` / `factors/sentiment.py`（个股量价情绪）；市场级综合情绪在 `factors/market_sentiment.py`（五维分位 + 温度计择时 + GSISI），外部数据接入 `sources/sentiment_data.py`。
 
 ### 16.3 改融合权重
 

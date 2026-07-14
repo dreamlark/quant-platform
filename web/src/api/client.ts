@@ -143,6 +143,22 @@ export interface Freshness {
   error?: string;
 }
 
+export interface MarketSentimentView {
+  available: boolean;
+  latest_date?: string | null;
+  index_value?: number | null;
+  sub_volume?: number | null;
+  sub_price?: number | null;
+  sub_money?: number | null;
+  sub_valuation?: number | null;
+  sub_riskpremium?: number | null;
+  gsisi?: number | null;
+  regime?: string | null;       // 恐惧 / 中性 / 贪婪
+  thermometer?: number | null;
+  signal?: string | null;       // 买入 / 半仓 / 空仓
+  error?: string;
+}
+
 export interface RunRecord {
   run_id: string;
   trigger: string;
@@ -163,6 +179,7 @@ export interface MonitorOverview {
   factors: FactorHealthSummary;
   models: ModelStatus[];
   freshness: Freshness;
+  market_sentiment?: MarketSentimentView;
   pipeline: UpdateStatus;
   last_run: RunRecord | null;
   auto: { enabled: boolean; next_run: string | null };

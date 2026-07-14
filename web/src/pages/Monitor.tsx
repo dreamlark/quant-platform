@@ -4,6 +4,7 @@ import {
 } from 'antd';
 import {
   api, MonitorOverview, RunRecord, DataStatus, FactorHealthSummary, ModelStatus, Freshness,
+  MarketSentimentView,
   getMonitorOverview, getMonitorHistory,
 } from '../api/client';
 import { COLORS } from '../theme';
@@ -22,6 +23,32 @@ const FACTOR_STATUS_COLOR: Record<string, string> = {
   衰减: 'gold',
   失效: 'red',
 };
+
+const REGIME_COLOR: Record<string, string> = {
+  恐惧: 'red',
+  中性: 'default',
+  贪婪: 'green',
+};
+const SIGNAL_COLOR: Record<string, string> = {
+  买入: 'green',
+  半仓: 'gold',
+  空仓: 'red',
+};
+
+function subBar(label: string, v: number | null | undefined) {
+  if (v == null) return null;
+  return (
+    <div style={{ marginTop: 4 }}>
+      <Text type="secondary" style={{ fontSize: 12 }}>{label}：{v.toFixed(1)}</Text>
+      <Progress
+        percent={Math.round(v)}
+        size="small"
+        showInfo={false}
+        strokeColor={v >= 50 ? COLORS.up : COLORS.down}
+      />
+    </div>
+  );
+}
 
 function fmtPct(v: number | null | undefined) {
   return v == null ? '-' : `${(v * 100).toFixed(1)}%`;
@@ -215,6 +242,46 @@ export default function Monitor() {
     </Card>
   );
 
+  const ms: MarketSentimentView | undefined = ov?.market_sentiment;
+  const sentimentCard = (
+    <Card className="metric-card" title="市场情绪指数（T1/T2/T3）">
+      {!ms || !ms.available ? (
+        <Text type="secondary">
+          {ms?.error ? ms.error : '暂无市场情绪数据（运行一次盘后流水线后生成）'}
+        </Text>
+      ) : (
+        <>
+          <Row gutter={16} align="middle">
+            <Col span={10}>
+              <Statistic title="综合情绪指数" value={ms.index_value ?? '-'} precision={1} />
+            </Col>
+            <Col span={14}>
+              <div>
+                <Tag color={REGIME_COLOR[ms.regime || ''] || 'default'}>{ms.regime || '-'}</Tag>
+                <Tag color={SIGNAL_COLOR[ms.signal || ''] || 'default'}>{ms.signal || '-'}</Tag>
+              </div>
+              <div style={{ marginTop: 6 }}>
+                <Text type="secondary" style={{ fontSize: 12 }}>
+                  温度计 {ms.thermometer ?? '-'} · GSISI {ms.gsisi ?? '-'}
+                </Text>
+              </div>
+            </Col>
+          </Row>
+          <div style={{ marginTop: 8 }}>
+            {subBar('量能分', ms.sub_volume)}
+            {subBar('价格分', ms.sub_price)}
+            {subBar('资金分', ms.sub_money)}
+            {subBar('估值分', ms.sub_valuation)}
+            {subBar('风险溢价分', ms.sub_riskpremium)}
+          </div>
+          <div style={{ marginTop: 6 }}>
+            <Text type="secondary" style={{ fontSize: 12 }}>更新日 {ms.latest_date}</Text>
+          </div>
+        </>
+      )}
+    </Card>
+  );
+
   return (
     <div className="page">
       <Title level={3}>运维监控</Title>
@@ -232,6 +299,9 @@ export default function Monitor() {
             <div style={{ marginTop: 6 }}>每日简报：{fresh?.brief_date || '-'}</div>
           </Card>
         </Col>
+      </Row>
+      <Row gutter={16} style={{ marginTop: 16 }}>
+        <Col span={24}>{sentimentCard}</Col>
       </Row>
       <Row gutter={16} style={{ marginTop: 16 }}>
         <Col span={24}>{historyCard}</Col>

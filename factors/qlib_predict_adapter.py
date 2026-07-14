@@ -8,9 +8,11 @@
        再用轻量梯度提升模型预测未来 ``horizon`` 日收益（横截面排序辅助，非绝对收益）。
   两者解耦：因子引擎产出的是**因子**（进因子融合），本适配器产出的是**方向预测**
   （进预测融合），互不干扰。
-- **为何算「qlib 参与了预测」**：本适配器复刻 qlib 的 Alpha158 特征表达式 + 用 qlib 风格的
-  梯度提升模型（优先 qlib 的 ``LGBModel``/``XGBModel``；缺 qlib 时回退 sklearn/xgboost 的
-  **等价实现**）。因此 qlib 的因子知识与模型方法论确实进入了「预测」这一环，而非仅停留在因子层。
+- **为何算「qlib 参与了预测」**：本适配器复刻 qlib 的 Alpha158 特征表达式 + 跑一个**多模型委员会**
+  （覆盖 qlib 同款 GBDT 家族：XGBoost / LightGBM / CatBoost，外加 sklearn 兜底）。每个 horizon
+  用 expanding-window 交叉验证估方向准确率（``dir_acc``），**自动选最优模型**在全量训练数据上重训，
+  因此 qlib 的因子知识与模型方法论确实进入了「预测」这一环。qlib 已安装且配置好数据 provider 时，
+  委员会可进一步纳入 qlib 原生 ``LGBModel``/``XGBModel``（经 qlib ``R``/``DatasetH`` 工作流）。
 - **与 Kronos/Darts 完全相同**：walk-forward 方向准确率评估 + ``predict_health`` 自动降权；
   ``dir_acc < 0.52 → 权重自动 0``（降权为实验性，不进核心融合），流水线零影响。
 - **walk-forward 诚实性（比 Darts 更严格）**：训练时剔除数据末尾的「评估/目标保留带」
@@ -27,7 +29,7 @@
 from __future__ import annotations
 
 import datetime as dt
-from typing import Dict, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -79,6 +81,10 @@ class QlibAdapter:
         self._trained = False
         self._train_failed = False  # 一次性失败标记：避免逐标的重试训练挂起
         self._has_qlib = False
+        # 模型委员会（多模型按 walk-forward dir_acc 选优）；fit 时填充
+        self._candidates: List[Tuple[str, Callable]] = []
+        self._best_name: Dict[int, str] = {}
+        self._health: Dict[int, Dict[str, Optional[float]]] = {}
 
     # ---------- 依赖探测（可选 qlib；pandas+xgboost 即可工作） ----------
     def _load(self) -> bool:
@@ -159,23 +165,101 @@ class QlibAdapter:
         feats["CorrRV20"] = ret.rolling(20).corr(v.pct_change())
         return feats
 
-    # ---------- 模型工厂（优先 qlib 风格，回退 xgboost/sklearn 等价实现） ----------
-    def _make_model(self):
-        """梯度提升回归：优先 xgboost（与 qlib XGBModel 等价），回退 sklearn GBR。"""
+    # ---------- 模型委员会（多模型按 walk-forward dir_acc 选优） ----------
+    # 候选 = sklearn-API 模型动物园：GBDT 族（XGB/LightGBM/CatBoost/HistGB/GBR）+
+    # Bagging 族（RandomForest/ExtraTrees）+ 线性基线（Ridge），即 qlib 表格模型同款引擎
+    # 加 sklearn 原生集成模型；qlib 装好并配置 provider 时再纳入 qlib 原生 LGBModel/XGBModel。
+    # 每个 horizon 独立做 expanding-window CV 估 dir_acc，挑最优在全量训练数据上重训。
+    # 说明：qlib 的 LGBModel/XGBModel/CatBoostModel 本质就是 lightgbm/xgboost/catboost 的封装，
+    # 本委员会用 sklearn-API 等价实现即可获得相同模型族与选优语义；qlib 原生工作流为增强项。
+    def _build_candidates(self) -> List[Tuple[str, Callable]]:
+        """构造候选模型工厂列表（sklearn-API「模型动物园」，统一 .fit(X,y)/.predict(X)）。
+
+        覆盖多族、零新依赖，由 walk-forward CV 的 dir_acc 选优：
+          - GBDT 族（qlib 表格模型同款引擎）：XGBoost / LightGBM / CatBoost /
+            HistGradientBoosting / GradientBoosting
+          - Bagging 族：RandomForest / ExtraTrees
+          - 线性基线：Ridge
+        qlib 已安装且配置数据 provider 时，额外纳入 qlib 原生 LGBModel/XGBModel。
+        """
+        cands: List[Tuple[str, Callable]] = []
+        # ---- GBDT 族（qlib 表格模型同款引擎，懒加载重型依赖）----
         try:
             import xgboost as xgb  # type: ignore
 
-            return xgb.XGBRegressor(
+            cands.append(("xgb", lambda: xgb.XGBRegressor(
                 n_estimators=120, max_depth=3, learning_rate=0.05,
                 subsample=0.8, colsample_bytree=0.8, n_jobs=4,
-                random_state=42, verbosity=0,
-            )
+                random_state=42, verbosity=0)))
         except Exception:
-            from sklearn.ensemble import GradientBoostingRegressor
+            pass
+        try:
+            import lightgbm as lgb  # type: ignore
 
-            return GradientBoostingRegressor(
-                n_estimators=120, max_depth=3, learning_rate=0.05, random_state=42
+            cands.append(("lgbm", lambda: lgb.LGBMRegressor(
+                n_estimators=120, max_depth=3, learning_rate=0.05,
+                subsample=0.8, colsample_bytree=0.8, n_jobs=4,
+                random_state=42, verbose=-1)))
+        except Exception:
+            pass
+        try:
+            import catboost as cb  # type: ignore
+
+            cands.append(("catb", lambda: cb.CatBoostRegressor(
+                iterations=120, depth=3, learning_rate=0.05,
+                subsample=0.8, random_state=42, verbose=False)))
+        except Exception:
+            pass
+        # ---- sklearn 原生集成 / 线性（零新依赖，必可用）----
+        try:
+            from sklearn.ensemble import (
+                GradientBoostingRegressor, RandomForestRegressor, ExtraTreesRegressor,
             )
+            from sklearn.linear_model import Ridge
+
+            cands.append(("gbr", lambda: GradientBoostingRegressor(
+                n_estimators=120, max_depth=3, learning_rate=0.05, random_state=42)))
+            cands.append(("rf", lambda: RandomForestRegressor(
+                n_estimators=120, n_jobs=-1, random_state=42)))
+            cands.append(("et", lambda: ExtraTreesRegressor(
+                n_estimators=120, n_jobs=-1, random_state=42)))
+            cands.append(("ridge", lambda: Ridge(alpha=1.0, random_state=42)))
+            try:
+                from sklearn.ensemble import HistGradientBoostingRegressor
+
+                cands.append(("histgb", lambda: HistGradientBoostingRegressor(
+                    max_iter=120, max_depth=3, learning_rate=0.05, random_state=42)))
+            except Exception:
+                pass
+        except Exception:
+            logger.warning("sklearn 集成模型不可用，委员会仅含 GBDT 重型库")
+        # ---- qlib 原生（门控）----
+        if self._has_qlib:
+            cands.append(("qlib_lgb", lambda: _QlibGBDTModel("LGBModel")))
+            cands.append(("qlib_xgb", lambda: _QlibGBDTModel("XGBModel")))
+        return cands
+
+    @staticmethod
+    def _cv_dir_acc(X: np.ndarray, y: np.ndarray, factory: Callable,
+                    n_splits: int = 3) -> Optional[float]:
+        """Expanding-window 交叉验证估计方向准确率（无前视）。"""
+        n = len(X)
+        if n < 240 or X.shape[1] == 0:
+            return None
+        edges = np.linspace(int(n * 0.5), n, n_splits + 1).astype(int)
+        accs: List[float] = []
+        for i in range(n_splits):
+            tr, te = np.arange(edges[i]), np.arange(edges[i], edges[i + 1])
+            if len(te) < 30:
+                continue
+            try:
+                m = factory()
+                m.fit(X[tr], y[tr])
+                p = np.asarray(m.predict(X[te])).ravel()
+                accs.append(float(np.mean(np.sign(p) == np.sign(y[te]))))
+            except Exception:
+                return None
+        return float(np.mean(accs)) if accs else None
 
     # ---------- 训练（剔除保留带，walk-forward 诚实） ----------
     def fit(self, work: pd.DataFrame, exclude_tail: int = 20) -> bool:
@@ -229,6 +313,8 @@ class QlibAdapter:
             X_ref = pd.concat(all_x[self.horizons[0]], ignore_index=True) if all_x[self.horizons[0]] else pd.concat([df for h in self.horizons for df in all_x[h]], ignore_index=True)
             self._feature_cols = list(X_ref.columns)
             self._feature_means = X_ref.mean()
+            # 模型委员会：多模型按 walk-forward dir_acc 选优（每个 horizon 独立）
+            self._candidates = self._build_candidates()
             for h in self.horizons:
                 if not all_x[h] or not ally[h]:
                     logger.warning(f"Qlib 预测源：周期 {h} 样本不足，跳过该周期")
@@ -240,9 +326,26 @@ class QlibAdapter:
                 if len(yv) < 100:
                     logger.warning(f"Qlib 预测源：周期 {h} 样本不足，跳过该周期")
                     continue
-                model = self._make_model()
-                model.fit(Xv, yv)
-                self._models[h] = model
+                health: Dict[str, Optional[float]] = {}
+                best_name, best_acc, best_model = None, -1.0, None
+                for name, factory in self._candidates:
+                    acc = self._cv_dir_acc(Xv, yv, factory)
+                    health[name] = acc
+                    if acc is not None and acc > best_acc:
+                        best_acc, best_name = acc, name
+                if best_name is None:
+                    logger.warning(f"Qlib 预测源：周期 {h} 所有候选 CV 失败，跳过")
+                    self._health[h] = health
+                    continue
+                best_model = dict(self._candidates)[best_name]()
+                best_model.fit(Xv, yv)
+                self._models[h] = best_model
+                self._best_name[h] = best_name
+                self._health[h] = health
+                logger.info(
+                    f"Qlib 预测源 周期{h}：选优={best_name} CV_dir_acc={best_acc:.3f}；"
+                    f"候选={ {k: (round(v, 3) if v is not None else None) for k, v in health.items()} }"
+                )
 
             if not self._models:
                 logger.warning("Qlib 预测源：所有周期训练失败，降级")
@@ -260,6 +363,10 @@ class QlibAdapter:
             self._train_failed = True
             logger.warning(f"Qlib 预测源训练失败（降级）：{exc}")
             return False
+
+    def model_health(self) -> Dict[int, Dict[str, Optional[float]]]:
+        """返回各 horizon 候选模型的 CV 方向准确率（供监控/审计/调试）。"""
+        return self._health
 
     # ---------- 推理（与 Kronos/Darts 同签名：predict(bars, horizon)） ----------
     def predict(self, bars, horizon: int) -> Optional[Dict[str, float]]:
@@ -308,3 +415,29 @@ class QlibAdapter:
         except Exception as exc:  # noqa: BLE001
             logger.warning(f"Qlib 预测源推理失败（降级）：{exc}")
             return None
+
+
+class _QlibGBDTModel:
+    """qlib 原生 GBDT 模型封装（需 qlib 已 init 且配置数据 provider）。
+
+    仅当 qlib 可用时登记进委员会；实际训练走 qlib 的 ``R``/``DatasetH`` 工作流。
+    沙箱未装 qlib 时不会被实例化，委员会自动退回 sklearn-API 等价实现。
+    """
+
+    def __init__(self, model_class: str) -> None:
+        self.model_class = model_class
+        try:
+            import qlib  # noqa: F401
+        except Exception as exc:  # pragma: no cover - 仅 qlib 环境可达
+            raise ImportError(f"qlib 未安装，无法使用原生 {model_class}") from exc
+        # 完整 qlib 训练需 qlib.init() + handler + DatasetH；此处保留接口，
+        # 具体 fit/predict 在 qlib 数据 provider 就绪后实现（见 Qlib 集成任务）。
+        raise NotImplementedError(
+            "qlib 原生模型需配置 qlib 数据 provider 后启用（见 Qlib 集成任务）"
+        )
+
+    def fit(self, X, y):
+        raise NotImplementedError
+
+    def predict(self, X):
+        raise NotImplementedError

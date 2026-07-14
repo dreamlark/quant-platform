@@ -26,6 +26,7 @@ _ANALYTICS_TABLES = {
     "daily_brief",
     "stock_review",
     "backtest_report",
+    "sentiment_index",
 }
 
 
@@ -300,3 +301,26 @@ class Repository:
                 "backtest_report", "SELECT * FROM backtest_report WHERE strategy = ?", [strategy]
             )
         return self._read("backtest_report", "SELECT * FROM backtest_report")
+
+    # ===== 市场情绪指数 sentiment_index =====
+    def save_sentiment_index(self, df: pd.DataFrame) -> int:
+        """落库单日市场情绪综合指数（一行一日期，按 date upsert）。"""
+        return self._upsert("sentiment_index", df, ["date"])
+
+    def load_sentiment_index(
+        self, date: Optional[dt.date] = None, latest: bool = True
+    ) -> pd.DataFrame:
+        if date:
+            return self._read(
+                "sentiment_index", "SELECT * FROM sentiment_index WHERE date = ?", [date]
+            )
+        if latest:
+            d = self._client("sentiment_index").execute(
+                "SELECT MAX(date) FROM sentiment_index"
+            ).fetchone()[0]
+            if d is None:
+                return pd.DataFrame()
+            return self._read(
+                "sentiment_index", "SELECT * FROM sentiment_index WHERE date = ?", [d]
+            )
+        return self._read("sentiment_index", "SELECT * FROM sentiment_index ORDER BY date")
