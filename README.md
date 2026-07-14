@@ -10,11 +10,21 @@
 1. [项目定位](#1-项目定位)
 2. [核心特性](#2-核心特性)
 3. [方法学红线（已落地）](#3-方法学红线已落地)
-4. [系统架构](#4-系统架构)
-5. [目录结构](#5-目录结构)
+4. [系统架构（分层 / 双数据流 / 依赖 / 存储）](#4-系统架构)
+   - 4.0 顶层分层架构（L1–L6）
+   - 4.1 盘后批处理数据流
+   - 4.2 实时服务数据流
+   - 4.3 模块依赖关系
+   - 4.4 数据存储角色
+   - 4.5 四源信号融合权重
+   - 4.6 容错与降级边界
+5. [目录结构与逐文件作用](#5-目录结构与逐文件作用)
 6. [环境要求](#6-环境要求)
 7. [安装与部署](#7-安装与部署)
-8. [配置说明（.env 与 Kronos 环境变量）](#8-配置说明env-与-kronos-环境变量)
+8. [配置说明与关键参数](#8-配置说明与关键参数)
+   - 8.1 `.env` 变量
+   - 8.2 Kronos 环境变量
+   - 8.3 `config/settings.yaml` 关键参数
 9. [数据更新与每日预测](#9-数据更新与每日预测)
 10. [Kronos 预测模型详解](#10-kronos-预测模型详解)
 11. [运维监控层（新增）](#11-运维监控层新增)
@@ -74,7 +84,48 @@
 
 ## 4. 系统架构
 
-### 4.1 数据流（盘后批处理）
+平台采用**「分层 + 批处理/服务双通道」**架构。盘后跑一次编排流水线把原始行情加工成「信号 / 板块 / 因子 / 简报」，全部落库；常驻 FastAPI 仅做只读服务，避免与批处理写者争锁（DuckDB 单写者约束，见 §4.6）。
+
+### 4.0 顶层分层架构（L1–L6）
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│ L6 展示层   web/ (React + antd + ECharts) 暗色看板             │
+│            /dashboard /factors /sectors /stocks /watchlist    │
+│            /monitor —— 纯静态前端，仅经 API 取数              │
+├──────────────────────────────────────────────────────────────┤
+│ L5 接口层   api/ (FastAPI) —— 只读服务                        │
+│            routers/* 聚合 DuckDB 只读查询 + run_store 历史；   │
+│            无计算、不写分析库（单写者约束）                    │
+├──────────────────────────────────────────────────────────────┤
+│ L4 编排层   scheduler/ (Orchestrator + Jobs)                  │
+│            run_daily(11 步) 串行编排；Jobs 接 APScheduler     │
+│            cron 触发；是唯一合法「写分析库」入口               │
+├──────────────────────────────────────────────────────────────┤
+│ L3 计算层   factors/ fusion/ evaluation/ backtest/ llm/       │
+│            信号计算 → 四源融合 → 因子体检 → 回测 → 简报       │
+├──────────────────────────────────────────────────────────────┤
+│ L2 存储层   storage/ (DuckDB + JSONL)                         │
+│            market.duckdb(原始日K+universe) /                  │
+│            analytics.duckdb(全部结果) / run_store.jsonl(历史) │
+├──────────────────────────────────────────────────────────────┤
+│ L1 数据源层 sources/ (akshare / mootdx / baostock)            │
+│            盘后拉取 OHLCV，复权、过滤可投资域                  │
+└──────────────────────────────────────────────────────────────┘
+```
+
+各层职责与约束一览：
+
+| 层 | 模块 | 职责 | 关键约束 |
+|----|------|------|----------|
+| L6 展示 | `web/` | 暗色看板、图表、交互 | 无业务逻辑，仅调 API |
+| L5 接口 | `api/` | 只读聚合、响应模型 | **禁止写** analytics 库 |
+| L4 编排 | `scheduler/` | 11 步流水线、调度 | 唯一写分析库入口；无顶层 try（任一步错即停） |
+| L3 计算 | `factors/ fusion/ evaluation/ backtest/ llm/` | 信号/融合/体检/回测/简报 | 纯函数式，依赖 storage 读写 |
+| L2 存储 | `storage/` | DuckDB 封装、UPSERT、幂等建表 | 单一连接；后复权为计算基准 |
+| L1 数据 | `sources/` | 行情拉取、复权、universe | 冗余三级（mootdx→akshare→baostock），懒加载降级 |
+
+### 4.1 盘后批处理数据流
 
 ```
                 ┌─────────────┐
@@ -94,12 +145,61 @@
                         └──────────────────────┴────────────────────┘
                                        ▼
                               analytics.duckdb (全部结果)
-                                       ▼
-                              FastAPI ──▶ React 暗色看板 (/dashboard /factors /sectors
-                                          /stocks /watchlist /monitor)
 ```
 
-### 4.2 四源信号融合权重
+> 步骤顺序（`scheduler/orchestrator.py`）：`step_ingest → universe → factors → sentiment → predict → health → neutralize → fusion → sector → llm → backtest`。任一步异常会中止整轮（无顶层 try/except），需在 `run_store.jsonl` 查看到达步骤与错误。
+
+### 4.2 实时服务 / 请求数据流
+
+```
+浏览器 → web/ (React) ──fetch──▶ api/main.py (FastAPI)
+                                      │
+                  ┌───────────────────┼───────────────────┐
+                  ▼                   ▼                   ▼
+            routers/dashboard   routers/factors    routers/stocks ...
+                  │                   │                   │
+                  └─────────┬─────────┴─────────┬─────────┘
+                            ▼                   ▼
+                  storage/repository  ◀── analytics.duckdb (只读)
+                  api/run_store      ◀── run_store.jsonl  (历史只读)
+```
+
+- 服务通道**只读**：所有查询走 `Repository` 的 SELECT；写操作只发生在 L4 编排层。
+- `run_store.jsonl` 由编排层追加写、API 层只读，天然避开 DuckDB 写者锁。
+
+### 4.3 模块依赖关系（编译期 / 运行期）
+
+```
+_run_real.py ──▶ scheduler.orchestrator
+                       │
+   ┌───────────┬───────┼───────────┬───────────┐
+   ▼           ▼       ▼           ▼           ▼
+ sources/*  factors/*  fusion/*  evaluation/* backtest/*
+   │           │       │           │           │
+   └─────▶ storage/repository ◀────┘           │
+              │           │                     │
+              ▼           ▼                     ▼
+       market.duckdb  analytics.duckdb      llm/* (可选)
+                       ▲
+                       │
+              api/* (只读服务)
+```
+
+- **计算层 → 存储层**：全部经 `storage/repository.Repository` 读写，不直接开 DuckDB 连接。
+- **重依赖懒加载**：`qlib / alphalens / backtrader / quantstats / mootdx / czsc / darts` 均在方法内 `try/except` 懒加载；缺失时走 pandas/numpy/scipy 兜底，不崩。
+- **LLM 可选**：`llm/` 无 key 时返回离线占位，核心链路不受影响。
+
+### 4.4 数据存储角色
+
+| 存储 | 文件 | 角色 | 大小(参考) | 入库 |
+|------|------|------|-----------|------|
+| 行情库 | `data/market.duckdb` | 原始日 K（后复权 `adj_back_close`）、`universe` 表、行业/市值元数据 | ~60 MB | 否（gitignore，可重跑） |
+| 分析库 | `data/analytics.duckdb` | 因子值、信号、板块、体检、回测、简报全部结果 | ~572 MB | 否（gitignore，可重跑） |
+| 运行历史 | `data/run_store.jsonl` | 每次更新追加一条（run_id/状态/步骤/耗时/错误），供监控层只读 | 小 | 否 |
+
+> 价格计算统一读取 `adj_back_close`（后复权），`adj_front_close`（前复权）仅供前端展示，严禁入计算（P0-1 红线）。
+
+### 4.5 四源信号融合权重
 
 `fusion/signal_pool.py` 默认融合权重（可在 `settings` 调）：
 
@@ -110,92 +210,224 @@
 | 情绪（sentiment） | 0.15 | 量价代理情绪 |
 | 预测（predict） | 0.25 | Kronos 等时序模型；模型内部再按 walk-forward 方向准确率细分权重 |
 
-> 预测源内部权重：每个模型由历史 walk-forward 方向准确率（`predict_health.dir_acc`）决定其占「预测分支」的比重。dir_acc ≤ 0.5（近随机）的模型自动降权到 0。在最新实跑中，Kronos-small 的 dir_acc≈0.632 是唯一拿到正权重的预测源。
+> 预测源内部权重：每个模型由历史 walk-forward 方向准确率（`predict_health.dir_acc`）决定其占「预测分支」的比重。`dir_acc ≤ 0.5`（近随机）的模型自动降权到 0。在最新实跑中，Kronos-small 的 `dir_acc≈0.632` 是唯一拿到正权重的预测源。
 
-### 4.3 分层
+### 4.6 容错与降级边界
 
-```
-┌─────────────────────────────────────────────┐
-│  Web (React + antd + ECharts)                 │  展示层
-├─────────────────────────────────────────────┤
-│  API (FastAPI)  api/routers/*                 │  接口层（读 DuckDB，单写者约束）
-├─────────────────────────────────────────────┤
-│  Scheduler (orchestrator.run_daily)           │  编排层（盘后批处理）
-├─────────────────────────────────────────────┤
-│  factors / fusion / evaluation / backtest /   │  计算层（信号/融合/回测）
-│  llm / sources / storage                       │
-└─────────────────────────────────────────────┘
-```
+- **单写者约束**：DuckDB 同一库同一时刻仅一个写连接。编排层（L4）是唯一写者；API（L5）常驻只读；自动调度与手工运行不要长时间重叠写同一库。
+- **幂等重跑**：`ingest` 按 `max(date)` 续跑；预测检查点 `_kronos_eval_ckpt_*.json` 按签名跳过已算股票。
+- **静默降级**：数据源/重模型缺失时降级到基线，不抛顶层异常（各 step 内部已隔离；但编排层无顶层 try，单步未捕获异常会中止整轮）。
+- **信号池兜底**：预测源 `dir_acc ≤ 0.5` 自动降权为 0，避免噪声污染融合。
 
 ---
 
-## 5. 目录结构
+## 5. 目录结构与逐文件作用
+
+### 5.1 完整目录树（已入库 99 文件）
 
 ```
 quant-platform/
-├── _run_real.py              # ★ 正式入口：沪深300 样本域 + 真实数据 → 今日信号报告
-├── api/
-│   ├── main.py               # FastAPI 应用，挂载全部 router
-│   ├── run_store.py          # 运行历史 JSONL 读写（避免 DuckDB 单写者冲突）
-│   └── routers/
-│       ├── admin.py          # 运维控制：触发更新 / 自动运行开关 / 进度（UpdateManager）
-│       ├── monitor.py        # 运维监控：跨库只读聚合（数据/因子/模型/管线状态）
-│       ├── dashboard.py      # 看板汇总
-│       ├── factors.py        # 因子健康 / 因子值
-│       ├── sectors.py        # 板块轮动
-│       ├── stocks.py         # 个股详情 / K线 / 简评 / 搜索
-│       └── watchlist.py      # 自选股记账
-├── common/                   # config 加载、统计工具
-├── config/                   # settings 默认配置
-├── evaluation/               # 因子体检（IC / ICIR / 衰减）
-├── factors/
-│   ├── factor_calc.py        # 因子 + 技术分计算（含 czsc 缠论）
-│   ├── qlib_factors.py       # qlib 因子（缺失时 pandas 兜底）
-│   ├── kronos_adapter.py     # Kronos 适配（离线/在线权重、端点分流）
-│   ├── darts_adapter.py      # Darts 预测适配（可选）
-│   ├── qlib_predict_adapter.py # qlib 预测适配（缺失时 pandas+xgboost 兜底）
-│   ├── prediction.py         # 预测编排 + walk-forward 评估 + 检查点续跑
-│   ├── risk_neutral.py       # 行业 / 市值中性化
-│   ├── sentiment.py          # 量价代理情绪
-│   └── czsc_signals.py       # 缠论信号（依赖 czsc）
-├── fusion/
-│   ├── signal_pool.py        # 四源加权融合 → signals
-│   └── sector.py             # 板块轮动 / 强弱
-├── llm/
-│   ├── client.py             # DeepSeek 客户端（无 key 离线降级）
-│   ├── brief_gen.py          # 市场简报生成
-│   └── stock_review.py       # 自选股逐只简评
-├── backtest/
-│   ├── walk_forward.py       # walk-forward 主口径（pandas/scipy 自包含）
-│   ├── cost_model.py         # A 股成本模型（佣金/印花税/滑点/T+1）
-│   ├── report.py             # 绩效报告（quantstats 懒加载）
-│   ├── qlib_backtest.py      # qlib 交叉验证（可选）
-│   └── bt_backtest.py        # backtrader 交叉验证（可选）
-├── scheduler/
-│   └── orchestrator.py       # ★ 每日盘后编排（11 步流水线）
-├── sources/
-│   ├── akshare_adapter.py    # akshare 新浪财经日 K 适配器（本环境唯一可用源）
-│   ├── base.py               # 数据源基类 / 路由
-│   ├── market_meta.py        # 行业 / 市值元数据
-│   ├── adjust.py             # 复权计算（后复权锚定最早）
-│   └── universe.py           # 可投资域过滤
-├── storage/
-│   └── repository.py         # DuckDB 仓储（读写封装）
-├── web/                      # React 前端（详见 §12）
-│   └── src/
-│       ├── api/client.ts     # API 客户端
-│       ├── App.tsx           # 路由
-│       └── pages/            # Dashboard / Factors / Sectors / Stocks / Watchlist / Monitor
-├── _vendor/Kronos/           # Kronos 官方推理代码（vendor，预测必需）
-├── _local_kronos_weights/    # Kronos 离线权重（small + Tokenizer-base）★ gitignore
-├── data/                     # DuckDB + 运行缓存 ★ gitignore（可重跑生成）
-├── deploy_windows.bat        # Windows 一键部署（建 .venv + 装依赖）
-├── run_daily.bat             # Windows 每日运行包装
-├── requirements.txt          # Python 依赖
-├── pyproject.toml            # 项目元数据
-├── .env.example              # 环境变量样例
-└── README.md
+├── _run_real.py                 # ★ 正式批处理入口（沪深300 样本域 → 今日信号报告）
+├── bootstrap_kronos.sh          # 拉取 Kronos 离线权重（small + Tokenizer-base）
+├── download_kronos_weights.py   # 权重下载脚本（镜像/官方端点）
+├── fetch_kronos_weights.py      # 权重下载（备选实现）
+├── deploy_windows.bat           # Windows 一键部署（建 .venv + 装依赖）
+├── run_daily.bat                # Windows 每日运行包装
+├── requirements.txt             # Python 依赖清单
+├── pyproject.toml               # 项目元数据 / 构建配置
+├── .env.example                 # 环境变量样例（复制为 .env 填写）
+├── .gitignore                   # 忽略 data/ / _local_kronos_weights/ / *.log 等
+├── README.md                    # 本文件
+├── KRONOS_WEIGHTS_GUIDE.md      # Kronos 权重获取与离线部署指南
+├── _completion_assessment.md    # 完成度评估（产物说明）
+├── _today_prediction.md         # ★ 示例产物：最近一次信号报告（入库作样例）
+├── _kronos_eval_ckpt_*.json     # ★ 示例产物：预测评估检查点（入库作样例）
+├── api/                         # L5 接口层（FastAPI，只读服务）
+├── common/                      # 配置加载 + 统计工具
+├── config/                      # settings 默认配置（YAML）
+├── evaluation/                  # 因子体检（IC / ICIR / 衰减）
+├── factors/                     # L3 信号计算（因子/技术/情绪/预测/中性化）
+├── fusion/                      # 四源融合 + 板块轮动 + 推送预留
+├── llm/                         # LLM 简报/简评 + 预留接口
+├── backtest/                    # walk-forward / 成本模型 / 报告 / 交叉验证
+├── scheduler/                   # L4 编排层（Orchestrator + Jobs）
+├── sources/                     # L1 数据源（akshare/mootdx/baostock + 复权/universe）
+├── storage/                     # L2 存储层（DuckDB 封装）
+├── tests/                       # 冒烟 / 单元 / 集成测试
+└── web/                         # L6 前端（React + antd + ECharts）
 ```
+
+> 未入库但运行必需的本地目录：`data/`（DuckDB + 缓存，gitignore，可重跑）、`_local_kronos_weights/`（Kronos 离线权重，gitignore）、`_vendor/Kronos/`（官方推理代码，gitignore）。
+
+### 5.2 顶层入口与部署脚本
+
+| 文件 | 作用 |
+|------|------|
+| `_run_real.py` | ★ 正式批处理入口：设 `KRONOS_LOCAL_DIR`、`n_eval_dates=1` 跑沪深300 样本域真实数据，写 `_today_prediction.md` |
+| `bootstrap_kronos.sh` | 拉取 Kronos 离线权重（small + Tokenizer-base）到 `_local_kronos_weights/` |
+| `download_kronos_weights.py` | 权重下载脚本（支持镜像/官方端点切换） |
+| `fetch_kronos_weights.py` | 权重下载备选实现 |
+| `deploy_windows.bat` | Windows 一键部署：建 `.venv` + 装依赖 + 启动 |
+| `run_daily.bat` | Windows 每日运行包装（调用 `_run_real.py`） |
+| `requirements.txt` | Python 依赖清单（核心链路边际轻量；重依赖可选） |
+| `pyproject.toml` | 项目元数据 / 构建配置 |
+| `.env.example` | 环境变量样例，复制为 `.env` 后填写密钥 |
+| `.gitignore` | 忽略 `data/`、`_local_kronos_weights/`、`*.log`、开发散文件等 |
+| `README.md` | 本说明文档 |
+| `KRONOS_WEIGHTS_GUIDE.md` | Kronos 权重获取与离线部署指南（含 §10.3 关键坑） |
+| `_completion_assessment.md` | 完成度评估说明（产物） |
+| `_today_prediction.md` | ★ 示例产物：最近一次信号报告（入库作样例） |
+| `_kronos_eval_ckpt_kronos_e1_s0.json` | ★ 示例产物：Kronos 评估检查点（入库作样例，可秒级复用） |
+| `_kronos_eval_ckpt_qlib_e1_s0.json` | ★ 示例产物：qlib 评估检查点（入库作样例） |
+
+### 5.3 后端逐文件作用
+
+#### 5.3.1 `api/`（FastAPI 接口层，只读）
+
+| 文件 | 作用 |
+|------|------|
+| `api/main.py` | FastAPI 应用入口，挂载全部 router + CORS + 静态前端 |
+| `api/database.py` | 共享资源：加载配置、构建 `Repository`（单例） |
+| `api/schemas.py` | Pydantic v2 响应模型（看板/因子/个股/板块等） |
+| `api/utils.py` | API 辅助函数（日期解析、查询封装等） |
+| `api/run_store.py` | 运行历史 JSONL 追加写（避开 DuckDB 写者锁），供监控只读 |
+| `api/routers/admin.py` | 运维控制：触发更新 / 自动运行开关 / 进度（UpdateManager） |
+| `api/routers/monitor.py` | 运维监控：跨库只读聚合（数据/因子/模型/管线状态） |
+| `api/routers/dashboard.py` | 看板汇总端点 |
+| `api/routers/factors.py` | 因子健康 / 因子值查询 |
+| `api/routers/sectors.py` | 板块轮动查询 |
+| `api/routers/stocks.py` | 个股详情 / K线 / 简评 / 搜索 |
+| `api/routers/watchlist.py` | 自选股记账读写 |
+
+#### 5.3.2 `common/`
+
+| 文件 | 作用 |
+|------|------|
+| `common/__init__.py` | 包初始化 |
+| `common/config.py` | 配置加载 + `build_repository()`（配置驱动，禁止硬编码密钥） |
+| `common/stats.py` | 通用统计 / 横截面工具（零重型依赖，numpy/pandas） |
+
+#### 5.3.3 `config/`
+
+| 文件 | 作用 |
+|------|------|
+| `config/settings.yaml` | **主配置**：数据源/复权/universe/因子/融合/体检/情绪/回测/LLM/调度（详见 §8.3） |
+| `config/factors.yaml` | 因子定义清单（名称/类别/参数），被 `factors/` 读取 |
+| `config/sectors.yaml` | 板块/行业分类与轮动参数 |
+
+#### 5.3.4 `evaluation/`
+
+| 文件 | 作用 |
+|------|------|
+| `evaluation/health_check.py` | 因子体检：IC / ICIR / 衰减 / 失效判定（`valid_ic` `valid_icir` `fail_ic` 等阈值） |
+
+#### 5.3.5 `factors/`（信号计算核心）
+
+| 文件 | 作用 |
+|------|------|
+| `factors/factor_calc.py` | 因子 + 技术分计算（含 czsc 缠论调用） |
+| `factors/qlib_factors.py` | qlib 因子（缺失时 pandas 兜底） |
+| `factors/kronos_adapter.py` | Kronos 适配：离线/在线权重、端点分流（按尺寸自动） |
+| `factors/darts_adapter.py` | Darts 预测适配（可选，A 股日收益近白噪声，已知塌缩为 0） |
+| `factors/qlib_predict_adapter.py` | qlib 预测适配（缺失时 pandas+xgboost 兜底） |
+| `factors/prediction.py` | 预测编排 + walk-forward 评估 + 检查点续跑（`KRONOS_N_EVAL_DATES` 控制） |
+| `factors/risk_neutral.py` | 行业 / 市值中性化（去风格暴露） |
+| `factors/sentiment.py` | 量价代理情绪（换手异常/振幅/涨停率/收益偏度） |
+| `factors/czsc_signals.py` | 缠论笔段信号（依赖 czsc，懒加载） |
+
+#### 5.3.6 `fusion/`
+
+| 文件 | 作用 |
+|------|------|
+| `fusion/signal_pool.py` | 四源加权融合 → `signals`（权重见 §4.5，`predict_min_dir_acc` 兜底） |
+| `fusion/sector.py` | 板块轮动 / 强弱排名（DuckDB 聚合，零重框架） |
+| `fusion/push.py` | 信号推送预留接口（P2，首版仅看板内展示，未实现） |
+
+#### 5.3.7 `llm/`
+
+| 文件 | 作用 |
+|------|------|
+| `llm/client.py` | DeepSeek 客户端（无 key 离线降级，OpenAI 兼容） |
+| `llm/brief_gen.py` | 市场简报生成（聚合四源信号 → 中文简报） |
+| `llm/stock_review.py` | 自选股逐只简评 |
+| `llm/prompts.py` | LLM System Prompt 模板（内置合规红线，缓存命中） |
+| `llm/agent_interface.py` | 多 Agent 研判预留接口（P2，首版不启用） |
+| `llm/factor_mining_if.py` | 自动因子挖掘预留接口（P2，首版不启用） |
+
+#### 5.3.8 `scheduler/`（编排层）
+
+| 文件 | 作用 |
+|------|------|
+| `scheduler/orchestrator.py` | ★ 每日盘后编排：`run_daily(11 步)` 串行流水线 |
+| `scheduler/jobs.py` | APScheduler 定时任务（cron 触发 `run_daily`，生产部署用） |
+
+#### 5.3.9 `sources/`（数据源层）
+
+| 文件 | 作用 |
+|------|------|
+| `sources/base.py` | 数据源基类 / 路由（多源优先级切换） |
+| `sources/akshare_adapter.py` | akshare 新浪财经日 K 适配器（本环境唯一可用源） |
+| `sources/mootdx_adapter.py` | mootdx / Tencent 适配器（主源，防封，懒加载降级） |
+| `sources/baostock_adapter.py` | baostock 适配器（冗余源，懒加载降级） |
+| `sources/adjust.py` | 复权计算（后复权锚定最早，前复权仅展示） |
+| `sources/universe.py` | 可投资域过滤（剔 ST / 次新 / 长期停牌，消生存偏差） |
+| `sources/market_meta.py` | 行业 / 市值元数据（中性化与板块用） |
+| `sources/_sw_industry_cache.json` | 申万行业映射缓存（本地，免重复拉取） |
+
+#### 5.3.10 `storage/`（存储层）
+
+| 文件 | 作用 |
+|------|------|
+| `storage/duckdb_client.py` | DuckDB 连接 / 读写 / upsert 封装（单一连接，幂等建表） |
+| `storage/repository.py` | 仓储层：业务读写接口（计算层统一经此访问 DB） |
+| `storage/schema.py` | 全库 DDL + 元数据（集中管理表结构一致，`adj_back_close` 为计算基准） |
+
+#### 5.3.11 `backtest/`
+
+| 文件 | 作用 |
+|------|------|
+| `backtest/walk_forward.py` | walk-forward 主口径（pandas/scipy 自包含，样本外） |
+| `backtest/engine.py` | 共享回测引擎（多空/仅多、CostModel、基准等权） |
+| `backtest/cost_model.py` | A 股成本模型（佣金/印花税/滑点/T+1/涨跌停流动性） |
+| `backtest/report.py` | 绩效报告（quantstats 懒加载） |
+| `backtest/qlib_backtest.py` | qlib 交叉验证（可选） |
+| `backtest/bt_backtest.py` | backtrader 交叉验证（可选） |
+
+#### 5.3.12 `tests/`
+
+| 文件 | 作用 |
+|------|------|
+| `tests/test_smoke.py` | 冒烟测试（核心链路可跑、无 key 降级） |
+| `tests/test_api.py` | API 端点测试 |
+| `tests/test_api_qa.py` | API 质量/边界测试 |
+| `tests/test_fe_constraints.py` | 前端约束测试（暗色/简体中文/无外部依赖） |
+| `tests/test_kronos_adapter.py` | Kronos 适配器单测（离线/在线解析） |
+| `tests/test_prediction_kronos_integration.py` | 预测+Kronos 集成测试 |
+| `tests/_dbg_kronos_load.py` | 调试：Kronos 权重加载 |
+| `tests/_smoke_kronos_live.py` | 调试：Kronos 实跑冒烟 |
+| `tests/stub_model/model/__init__.py` | 测试桩模型（模拟预测源） |
+
+### 5.4 前端 `web/`（React + antd + ECharts）
+
+| 文件 | 作用 |
+|------|------|
+| `web/index.html` | 前端 HTML 入口 |
+| `web/package.json` | 前端依赖与脚本 |
+| `web/pnpm-lock.yaml` | 依赖锁文件 |
+| `web/tsconfig.json` / `web/tsconfig.node.json` | TypeScript 配置 |
+| `web/vite.config.ts` | Vite 构建配置（含 API 代理） |
+| `web/src/main.tsx` | 前端入口挂载 |
+| `web/src/App.tsx` | 路由与布局 |
+| `web/src/index.css` | 全局样式（暗色主题） |
+| `web/src/theme.ts` | antd 暗色主题 token |
+| `web/src/api/client.ts` | API 客户端（fetch 封装） |
+| `web/src/components/charts.tsx` | ECharts 图表封装组件 |
+| `web/src/pages/Dashboard.tsx` | 看板汇总页 |
+| `web/src/pages/Factors.tsx` | 因子健康页 |
+| `web/src/pages/Sectors.tsx` | 板块轮动页 |
+| `web/src/pages/Stocks.tsx` | 个股详情页（K线/简评/搜索） |
+| `web/src/pages/Watchlist.tsx` | 自选股页 |
+| `web/src/pages/Monitor.tsx` | 运维监控页（数据/因子/模型/管线状态） |
 
 ---
 
@@ -309,7 +541,7 @@ pnpm build && pnpm preview
 
 ---
 
-## 8. 配置说明（.env 与 Kronos 环境变量）
+## 8. 配置说明与关键参数
 
 ### 8.1 `.env`（复制到 `.env` 后填写）
 
@@ -343,6 +575,101 @@ pnpm build && pnpm preview
 | `KRONOS_SKIP_QLIB` | `0` | `=1` 跳过 qlib 预测源 |
 | `KRONOS_N_EVAL_DATES` | `15` | 每只股票 walk-forward 评估的历史时点数。**⚠️ 见 §9.4 性能** |
 | `KRONOS_EVAL_STOCKS` | `0` | 仅评估前 N 只（调试用；0=全部） |
+
+### 8.3 `config/settings.yaml` 关键参数
+
+主配置全部走 YAML（由 `common/config.py` 加载），以下为影响行为的关键项。改完无需改代码，热加载取决于部署方式（重启 API / 重跑编排即生效）。
+
+**`app` / `paths`**
+
+| 键 | 默认 | 作用 |
+|----|------|------|
+| `app.analysis_first` | `true` | 分析优先红线：关闭任何交易/下单相关路径 |
+| `app.timezone` | `Asia/Shanghai` | 时区（影响调度与日期边界） |
+| `app.version` | `0.1.0` | 版本号 |
+| `paths.data_dir` | `./data` | 数据根目录 |
+| `paths.market_db` | `./data/market.duckdb` | 行情库路径 |
+| `paths.analytics_db` | `./data/analytics.duckdb` | 分析库路径 |
+| `paths.raw_cache` | `./data/raw_cache` | 原始拉取缓存 |
+
+**`data_sources` / `adjust` / `universe`**
+
+| 键 | 默认 | 作用 |
+|----|------|------|
+| `data_sources.priority` | `[mootdx, akshare, baostock]` | 多源优先级；本环境实际仅 akshare 可用 |
+| `data_sources.diff_threshold` | `0.03` | 多源价格差异阈值，超阈值告警 |
+| `data_sources.mootdx.bestip` | `true` | mootdx 自动选最优 IP（防封） |
+| `data_sources.mootdx.timeout` | `3.0` | 单源超时（秒） |
+| `data_sources.tencent.enable` | `true` | 腾讯源开关 |
+| `adjust.back_method` | `back` | 后复权方法（计算基准） |
+| `adjust.front_method` | `front` | 前复权方法（仅展示） |
+| `adjust.jump_detect` | `true` | 跳空/除权检测 |
+| `universe.min_listed_days` | `60` | 剔除上市不足 N 交易日次新 |
+| `universe.suspend_max_days` | `20` | 剔除停牌超 N 交易日 |
+| `universe.drop_st` | `true` | 剔除 ST / *ST |
+| `universe.keep_delisted` | `true` | 退市股是否保留（消生存偏差） |
+
+**`factors` / `fusion`**
+
+| 键 | 默认 | 作用 |
+|----|------|------|
+| `factors.config_file` | `config/factors.yaml` | 因子定义清单路径 |
+| `factors.neutralization` | `true` | 行业/市值中性化开关 |
+| `fusion.base_weights.factor` | `0.40` | 因子源权重 |
+| `fusion.base_weights.tech` | `0.20` | 技术源权重 |
+| `fusion.base_weights.sentiment` | `0.15` | 情绪源权重 |
+| `fusion.base_weights.predict` | `0.25` | 预测源权重 |
+| `fusion.confidence_scale` | `2.5` | 信号置信度缩放（映射到输出强度） |
+| `fusion.predict_min_dir_acc` | `0.52` | 预测源最低方向准确率，低于则降权为 0 |
+
+**`kronos` / `health_check` / `sentiment`**
+
+| 键 | 默认 | 作用 |
+|----|------|------|
+| `kronos.model_repo` | `NeoQuasar/Kronos-base` | **模型 HF id**；离线 small 须改 `Kronos-small`（见 §10.3） |
+| `health_check.ic_window` | `60` | IC 计算回看窗口 |
+| `health_check.valid_ic` | `0.02` | 有效因子最低 IC |
+| `health_check.valid_icir` | `0.5` | 有效因子最低 ICIR |
+| `health_check.decay_ic` | `0.01` | 衰减告警 IC 阈值 |
+| `health_check.fail_ic` | `0.005` | 失效 IC 阈值（低于判失效） |
+| `sentiment.window` | `20` | 情绪回看窗口 |
+| `sentiment.weights.turnover_anomaly` | `0.35` | 换手异常权重 |
+| `sentiment.weights.amplitude` | `0.20` | 振幅权重 |
+| `sentiment.weights.limit_up_rate` | `0.20` | 涨停率权重 |
+| `sentiment.weights.return_skew` | `0.25` | 收益偏度权重 |
+
+**`backtest`**
+
+| 键 | 默认 | 作用 |
+|----|------|------|
+| `backtest.initial_capital` | `1000000.0` | 初始资金（绩效展示用） |
+| `backtest.benchmark` | `[zz_quan_zhi, hs300]` | 基准（中证全指/沪深300） |
+| `backtest.walk_forward.train_window` | `250` | walk-forward 训练窗口（交易日） |
+| `backtest.walk_forward.test_window` | `20` | 样本外测试窗口 |
+| `backtest.walk_forward.step` | `20` | 滚动步长 |
+| `backtest.cost_model.commission` | `0.00025` | 佣金费率 |
+| `backtest.cost_model.stamp_duty` | `0.001` | 印花税（卖出） |
+| `backtest.cost_model.slippage_bps` | `2.0` | 滑点（bps） |
+| `backtest.cost_model.min_commission` | `5.0` | 最低佣金（元） |
+| `backtest.cost_model.limit_up_pct` / `limit_down_pct` | `0.10` | 涨跌停限制 |
+| `backtest.cost_model.t_plus_one` | `true` | T+1 约束 |
+
+**`llm` / `scheduler`**
+
+| 键 | 默认 | 作用 |
+|----|------|------|
+| `llm.provider` | `deepseek` | LLM 厂商 |
+| `llm.model` | `${DEEPSEEK_MODEL:deepseek-chat}` | 模型（可被 .env 覆盖） |
+| `llm.base_url` | `${DEEPSEEK_BASE_URL:https://api.deepseek.com}` | 端点 |
+| `llm.api_key_env` | `DEEPSEEK_API_KEY` | 密钥环境变量名 |
+| `llm.temperature` | `0.3` | 生成温度 |
+| `llm.max_tokens` | `2048` | 最大生成长度 |
+| `llm.cache_enabled` | `true` | 请求缓存（省 token） |
+| `llm.cache_ttl` | `86400` | 缓存有效期（秒） |
+| `scheduler.enabled` | `false` | 定时器开关（生产可开） |
+| `scheduler.cron` | `30 18 * * 1-5` | 盘后 18:30 周一至周五 |
+| `scheduler.timezone` | `Asia/Shanghai` | 调度时区 |
+| `scheduler.run_llm_after` | `18:00` | LLM 简报在此时点后生成 |
 
 ---
 
