@@ -160,6 +160,17 @@ Phase 4  运维      P3-1 调度 → P3-3 数据质量 → P3-2 MLOps
 
 ### P1-1 预测源过弱（Weak Prediction Source）
 
+> **状态更新（2026-07-15）**：**方向已定并落地**——采纳「先修两个弱源 + 动态 IC 加权 + 3 窗口闸门」。
+> 已实施：
+> - P1-1a Darts 训练泄漏修复：`prediction.generate` 中 `darts.fit` 前将 panel 截断到早于最早
+>   评估日（`_darts_train_cutoff`），统计量仅来自训练段，杜绝未来信息漏入训练。
+> - P1-1b 动态 IC 加权 + 闸门：`predict_health` 新增 `ic`/`rolling_ic`/`dropped`；
+>   `_eval_heavy` 算横截面 per-date Spearman IC → 滚动窗口 → `连续 3 窗口 |IC|<eps 自动剔除`；
+>   权重由 IC 动态决定（替代静态 dir_acc 门），IC 不可得回退 dir_acc 软加权。
+> - `config/settings.yaml` 暴露 `fusion.predict_ic`；`tests/test_prediction_ic.py` 覆盖。
+> - QLib 特征工程本就 point-in-time 正确（exclude_tail + 因果特征），无需改，纳入同一 IC 通道。
+> 详见 `docs/p1_1_prediction_source_audit.md`。
+
 **问题陈述**
 融合中 `predict` 权重 0.25，但内部仅 Kronos `dir_acc≈0.632` 拿到正权，darts/qlib 近随机被降权到 0。结果"预测第 4 源"实际只靠一个模型撑着，名存实亡。
 

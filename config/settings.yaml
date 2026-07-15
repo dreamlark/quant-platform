@@ -66,6 +66,13 @@ fusion:
   # 预测源：效果不佳经 predict_health 自动降权，不进核心权重
   predict_min_dir_acc: 0.52
   predict_experimental_below: 0.52
+  # 动态 IC 加权（P1-1b）：预测源融合权重由横截面 IC（Spearman）决定，替代静态 dir_acc 二值门；
+  # 连续 gate_windows 个滚动窗口 |IC| < eps → 自动剔除（dropped，权重 0）。IC 不可得时回退 dir_acc 软加权。
+  predict_ic:
+    rolling_window: 3             # 每滚动窗口含评估日数（计算窗口 IC）
+    eps: 0.02                      # |IC| 低于此视为 ≈0
+    ref: 0.05                      # 参考“良好”IC，用于权重归一（weight = base * (ic-eps)/(ref-eps)）
+    gate_windows: 3               # 连续 N 窗口 ≈0 → 剔除
   # regime 调节（PRD §8，默认开启·安全默认）：市场情绪极端（bear/panic）时，仅缩放融合总信号
   # 置信度（不动方向）。regime_state 由 factors/market_sentiment.py 基于「情绪 thermometer + 指数
   # N 日回撤」派生（bull/neutral/bear/panic）。scale ∈ (0,1]，panic 最小；neutral/bull=1.0 不调节。

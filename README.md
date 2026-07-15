@@ -210,7 +210,7 @@ _run_real.py ──▶ scheduler.orchestrator
 | 情绪（sentiment） | 0.15 | 量价代理情绪 |
 | 预测（predict） | 0.25 | Kronos 等时序模型；模型内部再按 walk-forward 方向准确率细分权重 |
 
-> 预测源内部权重：每个模型由历史 walk-forward 方向准确率（`predict_health.dir_acc`）决定其占「预测分支」的比重。`dir_acc ≤ 0.5`（近随机）的模型自动降权到 0。在最新实跑中，Kronos-small 的 `dir_acc≈0.632` 是唯一拿到正权重的预测源。
+> 预测源内部权重：每个模型由横截面 IC（`predict_health.ic`，Spearman 预测 vs 实际前向收益）动态决定其占「预测分支」的比重；`predict_health.dropped=True`（连续 3 滚动窗口 `|IC|<eps`）的模型自动降权到 0。IC 不可得时回退 `dir_acc` 软加权（`dir_acc ≤ 0.52` 降为 0）。在最新实跑中，Kronos-small 的 `dir_acc≈0.632` 是唯一拿到正权重的预测源。Darts 训练已修复前视泄漏（仅用早于评估日的 trailing window）。
 
 ### 4.6 容错与降级边界
 
@@ -660,7 +660,11 @@ pnpm build && pnpm preview
 | `fusion.base_weights.sentiment` | `0.15` | 情绪源权重 |
 | `fusion.base_weights.predict` | `0.25` | 预测源权重 |
 | `fusion.confidence_scale` | `2.5` | 信号置信度缩放（映射到输出强度） |
-| `fusion.predict_min_dir_acc` | `0.52` | 预测源最低方向准确率，低于则降权为 0 |
+| `fusion.predict_min_dir_acc` | `0.52` | 预测源最低方向准确率（dir_acc 软加权阈值 / IC 不可得时回退门） |
+| `fusion.predict_ic.rolling_window` | `3` | 动态 IC 加权：每滚动窗口含评估日数（计算窗口 IC） |
+| `fusion.predict_ic.eps` | `0.02` | `\|IC\|` 低于此视为 ≈0 |
+| `fusion.predict_ic.ref` | `0.05` | 参考"良好"IC，权重归一（`weight = base×(ic-eps)/(ref-eps)`） |
+| `fusion.predict_ic.gate_windows` | `3` | 连续 N 个滚动窗口 `\|IC\|<eps` → 自动剔除（`dropped`，权重 0） |
 | `fusion.regime_adjust.enabled` | `true` | **regime 调节总开关（PRD §8 安全默认 ON）**：极端（bear/panic）仅缩放置信度（不动方向）；ON/OFF 差异由 `compare_regime` 持续监控 |
 | `fusion.regime_adjust.scale.bull` | `1.0` | 牛市（贪婪且市场未深跌）不调节 |
 | `fusion.regime_adjust.scale.neutral` | `1.0` | 中性不调节 |

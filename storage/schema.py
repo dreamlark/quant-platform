@@ -106,6 +106,9 @@ TABLE_DDL: Dict[str, str] = {
             mape       DOUBLE,
             dir_acc    DOUBLE,
             weight     DOUBLE,
+            ic         DOUBLE,     -- 横截面信息系数（Spearman，预测 vs 实际前向收益）均值
+            rolling_ic DOUBLE,     -- 最近滚动窗口 IC（闸门判定用）
+            dropped    BOOLEAN,    -- 连续 3 窗口 |IC|≈0 自动剔除标记
             PRIMARY KEY (model_name, date)
         );
     """,
@@ -234,3 +237,18 @@ def _migrate_add_columns(connection) -> None:
             )
     except Exception as exc:  # noqa: BLE001
         logger.debug(f"sentiment_index 迁移跳过：{exc}")
+    # predict_health 新增 ic / rolling_ic / dropped（动态 IC 加权闸门）
+    try:
+        cols = {
+            r[1]
+            for r in connection.execute("PRAGMA table_info('predict_health')").fetchall()
+        }
+        for col, typ in (
+            ("ic", "DOUBLE"),
+            ("rolling_ic", "DOUBLE"),
+            ("dropped", "BOOLEAN"),
+        ):
+            if col not in cols:
+                connection.execute(f"ALTER TABLE predict_health ADD COLUMN {col} {typ}")
+    except Exception as exc:  # noqa: BLE001
+        logger.debug(f"predict_health 迁移跳过：{exc}")
