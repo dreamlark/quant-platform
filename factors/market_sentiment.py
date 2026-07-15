@@ -41,6 +41,12 @@ class MarketSentiment:
         self.th = ms.get("thermometer", {"fear": 30, "greed": 70, "buy": 10, "empty": 90})
         self.gsisi_window = int(ms.get("gsisi_window", 60))
         self.gsisi_weeks = int(ms.get("gsisi_weeks", 8))
+        # regime_state（bull/neutral/bear/panic）派生参数：情绪 + 指数 N 日回撤
+        rs = ms.get("regime_state", {})
+        self.drawdown_window = int(rs.get("drawdown_window", 20))
+        self.dd_panic = float(rs.get("dd_panic", -0.15))   # 指数回撤超 15% → panic
+        self.dd_bear = float(rs.get("dd_bear", -0.08))     # 回撤超 8% → bear
+        self.dd_bull = float(rs.get("dd_bull", -0.05))     # 贪婪且回撤优于 -5% → bull
 
     # ---- 工具 ----
     @staticmethod
@@ -55,6 +61,47 @@ class MarketSentiment:
         if std == 0 or np.isnan(std):
             return 50.0
         return float((recent <= val).mean() * 100)
+
+    def _index_drawdown(self, bars: pd.DataFrame, date: dt.date, window: int) -> Optional[float]:
+        """市场代理指数 N 日回撤（point-in-time，仅用 ≤date 数据）。
+
+        代理指数 = 横截面日均价（``adj_back_close`` 优先），等价于等权市场指数。
+        返回 ``(level - rolling_peak) / rolling_peak`` ∈ (-1, 0]；数据不足返回 ``None``。
+        """
+        if bars is None or bars.empty:
+            return None
+        px = "adj_back_close" if "adj_back_close" in bars.columns else "close"
+        if px not in bars.columns:
+            return None
+        b = bars[["date", px]].copy()
+        b = b[b["date"] <= date]
+        if b.empty:
+            return None
+        lvl = b.groupby("date")[px].mean()
+        if len(lvl) < window:
+            return None
+        tail = lvl.tail(window)
+        peak = float(tail.max())
+        if peak <= 0:
+            return None
+        return float((float(tail.iloc[-1]) - peak) / peak)
+
+    def _derive_regime_state(self, regime: str, dd: Optional[float]) -> str:
+        """由情绪 regime（恐惧/中性/贪婪）+ 指数回撤派生 4 态（point-in-time 安全）。
+
+        - 深度回撤（≤ dd_panic）→ panic；中度回撤（≤ dd_bear）→ bear；
+        - 贪婪且市场未深跌（> dd_bull）→ bull；其余 → neutral。
+        仅缩放置信度、不改方向；无回撤数据时用情绪直接映射（贪婪→bull，恐惧→bear）。
+        """
+        if dd is None:
+            return {"贪婪": "bull", "中性": "neutral", "恐惧": "bear"}.get(regime, "neutral")
+        if dd <= self.dd_panic:
+            return "panic"
+        if dd <= self.dd_bear:
+            return "bear"
+        if regime == "贪婪" and dd > self.dd_bull:
+            return "bull"
+        return "neutral"
 
     # ---- 维度构建（每日序列）----
     def _dim_volume(self, bars: pd.DataFrame) -> Optional[pd.Series]:
@@ -202,6 +249,8 @@ class MarketSentiment:
         th = index_value
         regime = "恐惧" if th <= self.th["fear"] else ("贪婪" if th >= self.th["greed"] else "中性")
         signal = "买入" if th <= self.th["buy"] else ("空仓" if th >= self.th["empty"] else "半仓")
+        dd = self._index_drawdown(bars, date, self.drawdown_window)
+        regime_state = self._derive_regime_state(regime, dd)
         row = {
             "date": date,
             "index_value": index_value,
@@ -212,6 +261,7 @@ class MarketSentiment:
             "sub_riskpremium": sub.get("riskpremium"),
             "gsisi": gsisi,
             "regime": regime,
+            "regime_state": regime_state,
             "thermometer": th,
             "signal": signal,
         }

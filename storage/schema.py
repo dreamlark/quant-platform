@@ -13,6 +13,8 @@ from __future__ import annotations
 
 from typing import Dict, List
 
+from loguru import logger
+
 # 含日期列的表（read/write 时做 datetime<->date 适配）
 DATE_COLUMNS: set[str] = {"date", "created_at"}
 
@@ -172,7 +174,8 @@ TABLE_DDL: Dict[str, str] = {
             sub_valuation   DOUBLE,    -- 估值分维度
             sub_riskpremium DOUBLE,    -- 风险溢价分维度
             gsisi           DOUBLE,    -- 高 Beta 行业轮动强度
-            regime          VARCHAR,   -- 恐惧 / 中性 / 贪婪
+            regime          VARCHAR,   -- 恐惧 / 中性 / 贪婪（温度计情绪态，展示用）
+            regime_state    VARCHAR,   -- bull / neutral / bear / panic（情绪+指数回撤派生，regime_adjust 缩放用）
             thermometer     DOUBLE,    -- 华泰温度计 0~100
             signal          VARCHAR,   -- 买入 / 半仓 / 空仓
             PRIMARY KEY (date)
@@ -208,8 +211,26 @@ def init_schema(con) -> None:
     connection = getattr(con, "con", con)
     for name in TABLE_ORDER:
         connection.execute(TABLE_DDL[name])
+    # 幂等迁移：补齐新增列（已存在的库不重建，仅 ALTER 补列）
+    _migrate_add_columns(connection)
 
 
 def all_tables() -> List[str]:
     """返回全部表名。"""
     return list(TABLE_ORDER)
+
+
+def _migrate_add_columns(connection) -> None:
+    """对可能缺列的旧库做幂等 ALTER（新增列用，缺失才补）。"""
+    # sentiment_index 新增 regime_state（bull/neutral/bear/panic）
+    try:
+        cols = {
+            r[1]
+            for r in connection.execute("PRAGMA table_info('sentiment_index')").fetchall()
+        }
+        if "regime_state" not in cols:
+            connection.execute(
+                "ALTER TABLE sentiment_index ADD COLUMN regime_state VARCHAR"
+            )
+    except Exception as exc:  # noqa: BLE001
+        logger.debug(f"sentiment_index 迁移跳过：{exc}")

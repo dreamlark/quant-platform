@@ -231,16 +231,25 @@ def compare_regime(
     """
     cfg = cfg or {}
     ra = cfg.get("fusion", {}).get("regime_adjust", {})
-    scale_map = {
-        "恐惧": float(ra.get("fear_scale", 0.75)),
-        "中性": float(ra.get("neutral_scale", 1.0)),
-        "贪婪": float(ra.get("greed_scale", 0.75)),
-    }
+    scale_from_cfg = ra.get("scale")
+    if isinstance(scale_from_cfg, dict) and scale_from_cfg:
+        scale_map = {k: float(v) for k, v in scale_from_cfg.items()}
+    else:
+        # 兼容旧 fear/greed/neutral 配置
+        scale_map = {
+            "恐惧": float(ra.get("fear_scale", 0.75)),
+            "中性": float(ra.get("neutral_scale", 1.0)),
+            "贪婪": float(ra.get("greed_scale", 0.75)),
+        }
     regime_series: Dict[dt.date, str] = {}
-    if sentiment_df is not None and not sentiment_df.empty and "regime" in sentiment_df.columns:
-        s = sentiment_df[["date", "regime"]].copy()
-        s["date"] = pd.to_datetime(s["date"]).dt.date
-        regime_series = {d: str(r) for d, r in zip(s["date"], s["regime"])}
+    if sentiment_df is not None and not sentiment_df.empty:
+        col = "regime_state" if "regime_state" in sentiment_df.columns else (
+            "regime" if "regime" in sentiment_df.columns else None
+        )
+        if col is not None:
+            s = sentiment_df[["date", col]].copy()
+            s["date"] = pd.to_datetime(s["date"]).dt.date
+            regime_series = {d: str(r) for d, r in zip(s["date"], s[col])}
 
     bt = SignalBacktester(cfg)
     _, m_off, rows_off = bt.run(bars_df, signals, universe_df)  # OFF

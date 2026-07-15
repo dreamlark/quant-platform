@@ -210,13 +210,13 @@ class Orchestrator:
         return signals
 
     def _latest_regime(self) -> Optional[str]:
-        """读取最近一次市场情绪 regime（供融合层 regime 调节用）。"""
+        """读取最近一次市场状态 regime_state（供融合层 regime 调节用，T-1 已落库）。"""
         try:
             idx = self.repo.load_sentiment_index(latest=True)
-            if idx is not None and not idx.empty and "regime" in idx.columns:
-                return str(idx.iloc[0]["regime"])
+            if idx is not None and not idx.empty and "regime_state" in idx.columns:
+                return str(idx.iloc[0]["regime_state"])
         except Exception as exc:  # noqa: BLE001
-            logger.debug(f"融合层读取 regime 失败（降级为无调节）：{exc}")
+            logger.debug(f"融合层读取 regime_state 失败（降级为无调节）：{exc}")
         return None
 
     def step_sector(self, date: dt.date) -> pd.DataFrame:

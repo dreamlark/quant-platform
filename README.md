@@ -343,7 +343,7 @@ quant-platform/
 
 | 文件 | 作用 |
 |------|------|
-| `fusion/signal_pool.py` | 四源加权融合 → `signals`（权重见 §4.5，`predict_min_dir_acc` 兜底）；含 `regime_adjust` 钩子（市场情绪极端时**仅缩放置信度**，默认 OFF，见 §8.3） |
+| `fusion/signal_pool.py` | 四源加权融合 → `signals`（权重见 §4.5，`predict_min_dir_acc` 兜底）；含 `regime_adjust` 钩子（regime_state=bear/panic 时**仅缩放置信度**，默认 ON·安全默认，见 §8.3） |
 | `fusion/sector.py` | 板块轮动 / 强弱排名（DuckDB 聚合，零重框架） |
 | `fusion/push.py` | 信号推送预留接口（P2，首版仅看板内展示，未实现） |
 
@@ -661,10 +661,15 @@ pnpm build && pnpm preview
 | `fusion.base_weights.predict` | `0.25` | 预测源权重 |
 | `fusion.confidence_scale` | `2.5` | 信号置信度缩放（映射到输出强度） |
 | `fusion.predict_min_dir_acc` | `0.52` | 预测源最低方向准确率，低于则降权为 0 |
-| `fusion.regime_adjust.enabled` | `false` | **regime 调节总开关（PRD §8 默认 OFF）**：启用前须经 `backtest/signal_backtest.compare_regime` 样本外验证（见下） |
-| `fusion.regime_adjust.fear_scale` | `0.75` | 恐惧（过度恐慌）时综合置信度 ×0.75 |
-| `fusion.regime_adjust.greed_scale` | `0.75` | 贪婪（过度乐观）时综合置信度 ×0.75 |
-| `fusion.regime_adjust.neutral_scale` | `1.0` | 中性不调节 |
+| `fusion.regime_adjust.enabled` | `true` | **regime 调节总开关（PRD §8 安全默认 ON）**：极端（bear/panic）仅缩放置信度（不动方向）；ON/OFF 差异由 `compare_regime` 持续监控 |
+| `fusion.regime_adjust.scale.bull` | `1.0` | 牛市（贪婪且市场未深跌）不调节 |
+| `fusion.regime_adjust.scale.neutral` | `1.0` | 中性不调节 |
+| `fusion.regime_adjust.scale.bear` | `0.70` | 熊市（指数回撤 8%~15%）置信度 ×0.70 |
+| `fusion.regime_adjust.scale.panic` | `0.45` | 恐慌（指数回撤 >15%）置信度 ×0.45（最小，极端保护） |
+| `market_sentiment.regime_state.drawdown_window` | `20` | 指数回撤滚动窗口（交易日），用于派生 regime_state |
+| `market_sentiment.regime_state.dd_panic` | `-0.15` | 指数回撤 ≤ -15% → panic |
+| `market_sentiment.regime_state.dd_bear` | `-0.08` | 指数回撤 ≤ -8% → bear |
+| `market_sentiment.regime_state.dd_bull` | `-0.05` | 贪婪且回撤 > -5% → bull |
 
 **`kronos` / `health_check` / `sentiment`**
 
@@ -706,7 +711,7 @@ pnpm build && pnpm preview
 | 引擎 | 作用 | 输出 |
 |------|------|------|
 | 第 4 引擎 `SentimentTimingBacktester` | T2 温度计择时样本外验证（PRD §10 硬指标）：把 `sentiment_index.signal` 作权益暴露叠加在因子 walk-forward 组合上，对照因子满仓 baseline 与等权基准，报告年化/最大回撤/超额 | `backtest_report` 中 `walk_forward_sentiment_timing` / `walk_forward_factor_baseline` |
-| 第 5 引擎 `compare_regime` | #4 regime 调节启用前门槛：信号层置信度加权多头组合，ON（regime 缩放）/OFF 双跑，差异仅来自情绪缩放 | `backtest_report` 中 `signal_long_only` / `signal_long_only_regime_scaled`，日志打印 ON-OFF 年化/Sharpe/回撤差异（正=改善，可据此决定是否开 `regime_adjust.enabled`） |
+| 第 5 引擎 `compare_regime` | #4 regime 调节验证：信号层置信度加权多头组合，ON（regime 缩放）/OFF 双跑，差异仅来自情绪缩放 | `backtest_report` 中 `signal_long_only` / `signal_long_only_regime_scaled`，日志打印 ON-OFF 年化/Sharpe/回撤差异（持续监控，正=regime 调节改善风险收益） |
 
 > 第 5 引擎需 ≥20 日信号历史方可回测；随每日运行累积后自动生效（单日运行自动跳过）。
 

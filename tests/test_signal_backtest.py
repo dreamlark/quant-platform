@@ -55,15 +55,15 @@ def _universe(bars: pd.DataFrame) -> pd.DataFrame:
 
 
 def _regime_series(bars: pd.DataFrame) -> dict:
-    """约 1/3 日期设为极端情绪（恐惧/贪婪），其余中性。"""
+    """约 1/2 日期设为极端状态（bear/panic），其余中性/bull。"""
     dates = list(bars["date"].unique())
     out = {}
     for i, d in enumerate(dates):
-        out[d] = ["恐惧", "中性", "贪婪"][i % 3]
+        out[d] = ["panic", "neutral", "bear", "bull"][i % 4]
     return out
 
 
-SCALE_MAP = {"恐惧": 0.75, "中性": 1.0, "贪婪": 0.75}
+SCALE_MAP = {"bull": 1.0, "neutral": 1.0, "bear": 0.70, "panic": 0.45}
 
 
 @pytest.fixture
@@ -121,7 +121,7 @@ def _count_holds(bt, bars, sig, uni, regime_series, scale_map) -> int:
 def test_compare_regime_returns_delta(env):
     bars, sig, uni = env
     sent_df = pd.DataFrame(
-        [{"date": d, "regime": r} for d, r in _regime_series(bars).items()]
+        [{"date": d, "regime_state": r} for d, r in _regime_series(bars).items()]
     )
     rows_off, rows_on, delta = compare_regime(bars, sig, uni, sent_df, {})
     assert not rows_off.empty and not rows_on.empty
@@ -140,7 +140,7 @@ if __name__ == "__main__":
     bars = _bars()
     sig = _signals(bars)
     uni = _universe(bars)
-    sent_df = pd.DataFrame([{"date": d, "regime": r} for d, r in _regime_series(bars).items()])
+    sent_df = pd.DataFrame([{"date": d, "regime_state": r} for d, r in _regime_series(bars).items()])
     rows_off, rows_on, delta = compare_regime(bars, sig, uni, sent_df, {})
     print(f"[ok] ON/OFF 报告行：{len(rows_off)} / {len(rows_on)}")
     print("delta:", {k: round(v, 4) for k, v in delta.items()})

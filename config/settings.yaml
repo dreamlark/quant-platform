@@ -66,14 +66,17 @@ fusion:
   # 预测源：效果不佳经 predict_health 自动降权，不进核心权重
   predict_min_dir_acc: 0.52
   predict_experimental_below: 0.52
-  # regime 调节（PRD §8，默认关闭）：市场情绪极端（恐惧/贪婪）时，仅缩放融合总信号
-  # 置信度（不动方向）。开启前须经样本外回测验证（backtest/signal_backtest.py ON/OFF 对比，
-  # 择时/风险收益改善方可开启）。scale<1 表示极端情绪下降低综合置信度（保守）。
+  # regime 调节（PRD §8，默认开启·安全默认）：市场情绪极端（bear/panic）时，仅缩放融合总信号
+  # 置信度（不动方向）。regime_state 由 factors/market_sentiment.py 基于「情绪 thermometer + 指数
+  # N 日回撤」派生（bull/neutral/bear/panic）。scale ∈ (0,1]，panic 最小；neutral/bull=1.0 不调节。
+  # ON/OFF 对比由 backtest/signal_backtest.py::compare_regime 持续监控（日志打印 delta）。
   regime_adjust:
-    enabled: false
-    fear_scale: 0.75             # 恐惧（过度恐慌）时置信度 ×0.75
-    greed_scale: 0.75            # 贪婪（过度乐观）时置信度 ×0.75
-    neutral_scale: 1.0           # 中性不调节
+    enabled: true
+    scale:
+      bull: 1.0                  # 牛市（贪婪且市场未深跌）不调节
+      neutral: 1.0               # 中性不调节
+      bear: 0.70                 # 熊市（回撤 8%~15%）置信度 ×0.70
+      panic: 0.45                # 恐慌（回撤 >15%）置信度 ×0.45（最小，极端保护）
 
 # ---------------------------------------------------------------------
 # Kronos 预测基础模型（融合第 4 源）
@@ -125,6 +128,11 @@ market_sentiment:
     empty: 90                    # 指数 >= 90 -> 空仓
   gsisi_window: 60               # 行业 Beta 估计窗口（交易日）
   gsisi_weeks: 8                 # GSISI 取最近 N 周行业周收益与 Beta 排序相关性
+  regime_state:                  # regime_state（bull/neutral/bear/panic）派生参数
+    drawdown_window: 20          # 指数回撤滚动窗口（交易日）
+    dd_panic: -0.15              # 指数回撤 <= -15% -> panic
+    dd_bear: -0.08              # 指数回撤 <= -8% -> bear
+    dd_bull: -0.05              # 贪婪且回撤 > -5% -> bull
 
 # ---------------------------------------------------------------------
 # 回测（F-14）：A 股制度 + walk-forward + 基准对照

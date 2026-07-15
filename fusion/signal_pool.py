@@ -34,16 +34,24 @@ class SignalPool:
         self.w_pred = float(bw.get("predict", 0.25))
         self.scale = float(fusion.get("confidence_scale", 2.5))
         self.deadzone = 0.05
-        # —— regime 调节（PRD §8，默认关闭）——
-        # 市场情绪极端（恐惧/贪婪）时，仅缩放融合总信号**置信度**（不动方向）。
-        # 须经样本外回测验证（backtest/signal_backtest.py）后方可开启。
+        # —— regime 调节（PRD §8，默认开启·安全默认）——
+        # 市场状态极端（bear/panic）时，仅缩放融合总信号**置信度**（不动方向）。
+        # regime_state 取值 bull/neutral/bear/panic（由 market_sentiment 派生，point-in-time 安全）。
+        # scale ∈ (0,1]，panic 最小；neutral/bull=1.0 不调节。
         ra = fusion.get("regime_adjust", {})
         self.regime_adjust_enabled = bool(ra.get("enabled", False))
-        self.regime_scale: Dict[str, float] = {
-            "恐惧": float(ra.get("fear_scale", 0.75)),
-            "中性": float(ra.get("neutral_scale", 1.0)),
-            "贪婪": float(ra.get("greed_scale", 0.75)),
-        }
+        scale_from_cfg = ra.get("scale")
+        if isinstance(scale_from_cfg, dict) and scale_from_cfg:
+            self.regime_scale: Dict[str, float] = {
+                k: float(v) for k, v in scale_from_cfg.items()
+            }
+        else:
+            # 兼容旧 fear/greed/neutral 配置（已弃用，建议迁移到 4 态 scale）
+            self.regime_scale = {
+                "恐惧": float(ra.get("fear_scale", 0.75)),
+                "中性": float(ra.get("neutral_scale", 1.0)),
+                "贪婪": float(ra.get("greed_scale", 0.75)),
+            }
         self.defs = load_factor_config()
         self.directions: Dict[str, int] = {
             f["name"]: int(f.get("direction", 1)) for f in self.defs
@@ -64,7 +72,7 @@ class SignalPool:
         """融合四源，返回 ``signals`` 表（date 已固定为 ``date``）。
 
         Args:
-            regime: 市场情绪 regime（恐惧/中性/贪婪）。若 ``fusion.regime_adjust.enabled``
+            regime: 市场状态 regime_state（bull/neutral/bear/panic）。若 ``fusion.regime_adjust.enabled``
                 为真且 regime 在缩放表内，则仅缩放综合置信度（不动方向）。
         """
         factor_weights = dict(

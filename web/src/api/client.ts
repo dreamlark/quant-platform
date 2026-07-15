@@ -154,7 +154,9 @@ export interface MarketSentimentView {
   sub_valuation?: number | null;
   sub_riskpremium?: number | null;
   gsisi?: number | null;
-  regime?: string | null;       // 恐惧 / 中性 / 贪婪
+  regime?: string | null;       // 恐惧 / 中性 / 贪婪（温度计情绪态）
+  regime_state?: string | null; // bull / neutral / bear / panic（缩放用）
+  regime_scale?: number | null; // 当前 regime_state 对应的置信度缩放系数
   thermometer?: number | null;
   signal?: string | null;       // 买入 / 半仓 / 空仓
   error?: string;

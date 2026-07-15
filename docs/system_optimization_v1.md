@@ -192,6 +192,16 @@ Phase 4  运维      P3-1 调度 → P3-3 数据质量 → P3-2 MLOps
 
 ### P1-2 regime_adjust 启用（Market Regime Confidence Scaling）
 
+> **状态更新（2026-07-15）**：**已落地并启用**。核心改动：
+> - `factors/market_sentiment.py` 新增 4 态 `regime_state`（bull/neutral/bear/panic）派生：
+>   由情绪 thermometer（恐惧/中性/贪婪）+ **指数 N 日回撤**（横截面均价代理，point-in-time）合成。
+> - `sentiment_index` 表新增 `regime_state` 列（DDL + `init_schema` 幂等 ALTER 迁移）。
+> - `fusion.regime_adjust.enabled` 默认 **true**（安全默认：neutral/bull=1.0 不调节，仅 bear/panic 缩放）；
+>   缩放表改为 4 态 `scale: {bull:1.0, neutral:1.0, bear:0.70, panic:0.45}`。
+> - 融合层读 `regime_state`（T-1 已落库）做缩放；`compare_regime` 默认 4 态 + 读 `regime_state`。
+> - API/前端：MarketSentimentView 新增 `regime_state` / `regime_scale`，Monitor/Dashboard 情绪卡展示状态与缩放系数。
+> - 测试：`tests/test_market_regime_state.py`（派生 + 回撤 point-in-time 不变性 + compute 输出）+ `test_regime_adjust.py`/`test_signal_backtest.py` 迁移到 4 态；全量 57 测试通过。
+
 **问题陈述**
 `fusion/signal_pool.py` 已实现"极端情绪仅缩放置信度"的 `regime_adjust` 钩子，但默认 OFF。市场极端期的回撤保护未生效。
 

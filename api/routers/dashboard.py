@@ -114,6 +114,22 @@ def _market_sentiment(repo: Repository) -> MarketSentimentView:
         row["latest_date"] = str(row.get("date"))
         row["available"] = True
         clean = {k: _sanitize_val(v) for k, v in row.items() if k in MarketSentimentView.model_fields}
+        # 计算当前 regime_state 对应的置信度缩放系数（Monitor/前端展示）
+        ra = get_settings().get("fusion", {}).get("regime_adjust", {})
+        state = clean.get("regime_state")
+        scale = 1.0
+        if ra.get("enabled", False) and state:
+            sm = ra.get("scale")
+            if isinstance(sm, dict) and state in sm:
+                scale = float(sm[state])
+            elif not isinstance(sm, dict):
+                legacy = {
+                    "恐惧": ra.get("fear_scale", 0.75),
+                    "中性": ra.get("neutral_scale", 1.0),
+                    "贪婪": ra.get("greed_scale", 0.75),
+                }
+                scale = float(legacy.get(state, 1.0))
+        clean["regime_scale"] = scale
         return MarketSentimentView(**clean)
     except Exception as exc:  # noqa: BLE001
         return MarketSentimentView(available=False, error=f"{type(exc).__name__}: {exc}")

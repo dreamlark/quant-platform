@@ -121,7 +121,9 @@ class MarketSentimentView(BaseModel):
     sub_valuation: Optional[float] = None
     sub_riskpremium: Optional[float] = None
     gsisi: Optional[float] = None
-    regime: Optional[str] = None  # 恐惧 / 中性 / 贪婪
+    regime: Optional[str] = None  # 恐惧 / 中性 / 贪婪（温度计情绪态）
+    regime_state: Optional[str] = None  # bull / neutral / bear / panic（缩放用）
+    regime_scale: Optional[float] = None  # 当前 regime_state 对应的置信度缩放系数
     thermometer: Optional[float] = None
     signal: Optional[str] = None  # 买入 / 半仓 / 空仓
     error: Optional[str] = None

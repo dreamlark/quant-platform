@@ -29,6 +29,12 @@ const REGIME_COLOR: Record<string, string> = {
   中性: 'default',
   贪婪: 'green',
 };
+const REGIME_STATE_COLOR: Record<string, string> = {
+  bull: 'green',
+  neutral: 'default',
+  bear: 'orange',
+  panic: 'red',
+};
 const SIGNAL_COLOR: Record<string, string> = {
   买入: 'green',
   半仓: 'gold',
@@ -263,6 +269,14 @@ export default function Monitor() {
               <div style={{ marginTop: 6 }}>
                 <Text type="secondary" style={{ fontSize: 12 }}>
                   温度计 {ms.thermometer ?? '-'} · GSISI {ms.gsisi ?? '-'}
+                </Text>
+              </div>
+              <div style={{ marginTop: 6 }}>
+                <Tag color={REGIME_STATE_COLOR[ms.regime_state || ''] || 'default'}>
+                  状态 {ms.regime_state || '-'}
+                </Tag>
+                <Text type="secondary" style={{ fontSize: 12 }}>
+                  置信缩放 ×{(ms.regime_scale ?? 1).toFixed(2)}
                 </Text>
               </div>
             </Col>
