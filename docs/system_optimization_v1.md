@@ -90,35 +90,62 @@ Phase 4  运维      P3-1 调度 → P3-3 数据质量 → P3-2 MLOps
 
 ### P0-2 数据源冗余（Data Source Redundancy）
 
+> **状态更新（2026-07-15）**：本项**核心代码已落地并验证**，无需新建适配器。
+> 原 PRD 的"新建 Eastmoney/Tencent 日线适配器"方案作废——改为**直接采用既有的多源路由**
+> （`DataSourceRouter` + `mootdx`/`akshare`/`baostock` 三适配器），该方案源自早期 a-stock-DB
+> 的 scale 设计，因沙箱网络受限曾临时降级为单源，现已在生产调度路径中完整跑通（见下方"已实现"）。
+> 剩余工作仅为：真机验证 + 配置化 + 文档化 + 偏差日志结构化。
+
 **问题陈述**
-`step_ingest` 当前仅用 akshare Sina 单源（`DataSourceRouter([AkshareDailyAdapter()])`）。单源既是单点故障，也是你亲历的限流元凶——生产环境每日仍只打一个源。
+`step_ingest` 早期在沙箱里因网络受限临时降级为 akshare Sina 单源。单源既是单点故障，也是限流元凶
+（你亲历的痛点）。数据源冗余在最初设计就已纳入（`a-stock-DB` 的 scale 方案），现需把这套
+多源路由正式接回生产路径。
 
 **目标与成功指标**
-- ingest 支持 ≥2 个可切换数据源（Sina / Eastmoney / Tencent），主源失败时自动降级。
-- 限流（空返回/HTTP 异常）触发指数退避 + 源切换，不再硬失败。
+- ingest 走 `DataSourceRouter`，按优先级 `mootdx(1) → akshare(1) → baostock(4)` 回退；主源失败/超时自动降级。
+- 单源挂死（如 `baostock.login` 阻塞）有超时护栏，不冻结整条流水线。
+- 跨源 `close` 差异超阈值告警，并结构化记录供监控（衔接 P2-3）。
 
 **范围**
-- **含**：实现 `EastmoneyDailyAdapter`/`TencentDailyAdapter`；在 `DataSourceRouter` 加优先级回退 + 退避；按代码记录"每标的最近成功源"；跨源价格交叉校验。
-- **不含**：存储层改动、新增数据库。
+- **含**：真机验证三源可达性；把 `source_timeout` / `diff_threshold` 配到 `config/settings.yaml`；
+  跨源偏差写 `divergence_log`；README/架构文档更新"已采用多源冗余"。
+- **不含**：新建 Eastmoney/Tencent 适配器（已确认不必要）；存储层改动。
 
-**方案与架构**
-- 适配器统一接口（沿用 `sources/` 现有契约）：`fetch(symbol, start, end) -> DataFrame`。
-- Router 策略：主源优先；失败/空结果 → 指数退避（带 jitter）→ 下一源；成功源写入 `universe.last_source`。
-- 一致性校验：日线 `close` 跨源偏差 > 阈值（如 1%）时告警并保留主源值，记录 `divergence_log`。
+**方案与架构（采用既有实现）**
+- 统一接口：`sources/base.py::DataSource`（`fetch_daily_bars` 返回不复权原始日 K，复权由 `adjust.py` 统一处理）。
+- 三适配器（均已实现）：
+  - `MootdxAdapter`（name=`mootdx`, priority=1）：通达信 TCP 7709 直连，**不会被 IP 封禁**，生产首选。
+  - `AkshareDailyAdapter`（name=`akshare`, priority=1）：akshare Sina 历史日线，沙箱可用。
+  - `BaostockAdapter`（name=`baostock`, priority=4）：baostock，兜底；`login()` 在受限网络会阻塞 → 由超时护栏降级。
+  - （附 `tencent` priority=2 为盘中实时快照源，不参与日线回退，仅供 realtime。）
+- 路由策略：`DataSourceRouter.fetch` 按 `priority` 升序尝试；每个源 `health_check`+`fetch_daily_bars`
+  均经 `_call` 套 `source_timeout`（默认 20s，daemon 线程 + join 超时）护栏；首个成功源返回，
+  后续源做 `_cross_check`（差异 > `diff_threshold=0.03` 告警并标记 `source_suspect`）；原始响应落 `data/raw_cache/`。
+- 生产装配：`scheduler/jobs.py::build_data_router(settings)` 读 `settings.data_sources.priority`
+  （默认 `["mootdx","akshare","baostock"]`）构建路由。
+
+**已实现 & 已验证（本会话生产路径跑通）**
+- 生产调度路径（`build_data_router` + `Orchestrator(data_source=router)`）在沙箱跑通：路由构建为
+  `[mootdx(1), akshare(1), baostock(4)]`；`baostock` 因 `login` 阻塞触发 >20s 超时 → 自动跳过；
+  `mootdx` 在沙箱返回 0 行（沙箱无 TDX 网络，预期）；`akshare` 正常交付全部 825 行 → **冗余降级链路按设计工作**。
+- 修复了 3 个阻塞生产路径的缺陷（同批提交）：`jobs.py` 误 import `AkShareAdapter`（应为 `AkshareDailyAdapter`）、
+  `source_timeout` 未透传、生产路由未启用。
 
 **关键设计**
-- 复权口径统一：所有适配器强制同一调整模式（qfq/hfq 由 `config/settings.yaml` 固定），避免源间口径错配。
-- 退避参数（初始/上限/次数）配置化。
+- 复权口径统一：所有适配器返回不复权原始价，复权集中在 `adjust.py`，杜绝源间口径错配。
+- 超时护栏是真实机上的关键保险：baostock 在部分网络会 `login` 挂死，无护栏则整条 ingest 冻结。
 
 **验收标准**
-- 单测：mock 主源失败，验证回退到次源且数据完整。
-- 演练：Sina 限流场景（mock 空/503）→ 退避后切源成功，无任务失败。
-- 跨源偏差告警可触发。
+- 真机（有外网/TDX 可达）跑一次 `run_daily`：三源中至少两源成功，日志可见回退与 `source` 标注。
+- `config/settings.yaml` 含 `data_sources.timeout` / `diff_threshold`；改值后行为随之变化。
+- 故意制造跨源差异 > 阈值 → `divergence_log` 出现记录（衔接 P2-3 告警）。
 
 **风险与缓解**
-- 不同源复权/停牌处理差异。缓解：schema 断言 + 统一调整模式 + 偏差告警。
+- 沙箱无法验证 mootdx/baostock 真机可达性。缓解：**本项为"采用既有方案"，真机验证是验收动作而非开发**；
+  真机若 mootdx 不可达，akshare 仍兜底，不影响生产。
+- 不同源停牌/复权边界差异。缓解：统一不复权接口 + `_cross_check` 偏差告警。
 
-**工作量与依赖**：中；依赖 `config/settings.yaml` 扩展字段。
+**工作量与依赖**：低（核心已落地）；依赖一次真机验证与文档更新；`config/settings.yaml` 少量扩展。
 
 ---
 
