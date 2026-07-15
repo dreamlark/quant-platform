@@ -40,6 +40,10 @@ const SIGNAL_COLOR: Record<string, string> = {
   半仓: 'gold',
   空仓: 'red',
 };
+const BATCH_STEP_COLOR: Record<string, string> = {
+  ok: 'green',
+  fail: 'red',
+};
 
 function subBar(label: string, v: number | null | undefined) {
   if (v == null) return null;
@@ -296,6 +300,38 @@ export default function Monitor() {
     </Card>
   );
 
+  const batch = ov?.batch_run;
+  const batchRunCard = (
+    <Card className="metric-card" title="批处理运行健康（盘后流水线）">
+      {!batch || !batch.run ? (
+        <Empty description="暂无批处理运行记录（运行一次盘后流水线后生成）" />
+      ) : (
+        <>
+          <Row gutter={16} align="middle">
+            <Col>
+              <Tag color={batch.run.status === 'ok' ? 'green' : 'red'}>
+                {batch.run.status === 'ok' ? '成功' : '失败'}
+              </Tag>
+            </Col>
+            <Col>
+              <Text type="secondary" style={{ fontSize: 12 }}>
+                目标日 {batch.run.date} · 耗时 {batch.run.duration_s}s
+                {batch.run.error ? ` · ${batch.run.error}` : ''}
+              </Text>
+            </Col>
+          </Row>
+          <div style={{ marginTop: 10 }}>
+            {batch.steps.map((s, i) => (
+              <Tag key={`${s.step}-${i}`} color={BATCH_STEP_COLOR[s.status] || 'default'} style={{ marginBottom: 4 }}>
+                {s.step}{s.duration_s != null ? ` ${s.duration_s}s` : ''}{s.status === 'fail' ? ' ✗' : ' ✓'}
+              </Tag>
+            ))}
+          </div>
+        </>
+      )}
+    </Card>
+  );
+
   return (
     <div className="page">
       <Title level={3}>运维监控</Title>
@@ -313,6 +349,9 @@ export default function Monitor() {
             <div style={{ marginTop: 6 }}>每日简报：{fresh?.brief_date || '-'}</div>
           </Card>
         </Col>
+      </Row>
+      <Row gutter={16} style={{ marginTop: 16 }}>
+        <Col span={24}>{batchRunCard}</Col>
       </Row>
       <Row gutter={16} style={{ marginTop: 16 }}>
         <Col span={24}>{sentimentCard}</Col>

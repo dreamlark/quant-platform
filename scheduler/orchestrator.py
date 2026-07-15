@@ -36,6 +36,7 @@ from backtest.signal_backtest import compare_regime
 from sources.adjust import adjust_prices
 from sources.universe import UniverseFilter
 from storage.repository import Repository
+from scheduler.run_state import RunState
 
 
 class Orchestrator:
@@ -391,26 +392,27 @@ class Orchestrator:
     # ---- 全量编排 ------------------------------------------------
     def run_daily(self, target_date: dt.date, lookback_days: int = 250) -> Dict:
         start = target_date - dt.timedelta(days=lookback_days)
-        if self.source is not None:
-            self.step_ingest(start, target_date)
-        self.step_universe(target_date)
-        self.step_factors(target_date)
-        self.step_sentiment(target_date)
-        self.step_predict(target_date)
-        self.step_health(target_date)
-        self.step_neutralize(target_date)
-        signals = self.step_fusion(target_date)
-        self.step_sector(target_date)
-        self.step_market_sentiment(target_date)
-        self.step_llm(target_date)
-        self.step_backtest(target_date)
-        # P2-3 失效告警：阈值触发 + 每日摘要（非致命；默认 Mock 通道不触网）
-        try:
-            from common.alert_monitor import monitor_run
+        with RunState(target_date, trigger="batch") as rs:
+            if self.source is not None:
+                rs.step("ingest", self.step_ingest, start, target_date)
+            rs.step("universe", self.step_universe, target_date)
+            rs.step("factors", self.step_factors, target_date)
+            rs.step("sentiment", self.step_sentiment, target_date)
+            rs.step("predict", self.step_predict, target_date)
+            rs.step("health", self.step_health, target_date)
+            rs.step("neutralize", self.step_neutralize, target_date)
+            signals = rs.step("fusion", self.step_fusion, target_date)
+            rs.step("sector", self.step_sector, target_date)
+            rs.step("market_sentiment", self.step_market_sentiment, target_date)
+            rs.step("llm", self.step_llm, target_date)
+            rs.step("backtest", self.step_backtest, target_date)
+            # P2-3 失效告警：阈值触发 + 每日摘要（非致命；默认 Mock 通道不触网）
+            try:
+                from common.alert_monitor import monitor_run
 
-            monitor_run(self.repo, self.settings, as_of=target_date)
-        except Exception as exc:  # noqa: BLE001
-            logger.warning(f"[alert] 监控触发失败（不影响主流程）：{exc}")
+                monitor_run(self.repo, self.settings, as_of=target_date)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(f"[alert] 监控触发失败（不影响主流程）：{exc}")
         return {"date": target_date, "signals": len(signals)}
 
     # ---- 工具 ----------------------------------------------------

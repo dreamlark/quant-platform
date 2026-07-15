@@ -176,6 +176,37 @@ export interface RunRecord {
   error: string | null;
 }
 
+// 批处理运行逐步状态（P3-1 落盘）
+export interface BatchRunStepSummary {
+  step: string;
+  status: string; // ok | fail
+  duration_s: number;
+}
+export interface BatchRunRecord {
+  kind: string;
+  run_id: string;
+  date: string;
+  trigger: string;
+  status: string;
+  start_ts: string;
+  end_ts: string;
+  duration_s: number;
+  error: string | null;
+  steps: BatchRunStepSummary[];
+}
+export interface BatchRunStepDetail {
+  run_id: string;
+  step: string;
+  status: string;
+  ts: string;
+  duration_s: number;
+  error: string | null;
+}
+export interface BatchRun {
+  run: BatchRunRecord | null;
+  steps: BatchRunStepDetail[];
+}
+
 export interface MonitorOverview {
   generated_at: string;
   data: DataStatus;
@@ -185,6 +216,7 @@ export interface MonitorOverview {
   market_sentiment?: MarketSentimentView;
   pipeline: UpdateStatus;
   last_run: RunRecord | null;
+  batch_run: BatchRun;
   auto: { enabled: boolean; next_run: string | null };
   history_count: number;
 }

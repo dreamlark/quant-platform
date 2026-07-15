@@ -21,7 +21,7 @@ if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
 from api.routers.admin import mgr  # noqa: E402  # 实时管线状态
-from api.run_store import load_runs  # noqa: E402
+from api.run_store import load_runs, load_steps  # noqa: E402
 
 router = APIRouter(prefix="/api/monitor", tags=["monitor"])
 
@@ -161,12 +161,32 @@ def overview():
         "market_sentiment": _market_sentiment(),
         "pipeline": mgr.state,
         "last_run": runs[0] if runs else None,
+        "batch_run": _batch_run(),
         "auto": {"enabled": mgr.state["auto_enabled"], "next_run": mgr.state["next_run"]},
         "history_count": len(load_runs(1000)),
     }
+
+
+@router.get("/batch-run")
+def batch_run():
+    """批处理（orchestrator.run_daily）最近一次运行 + 逐步状态（P3-1 落盘）。"""
+    return _batch_run()
 
 
 @router.get("/history")
 def history(limit: int = 50):
     """运行历史记录（最新在前）。"""
     return {"runs": load_runs(limit)}
+
+
+def _batch_run() -> dict:
+    """从运行历史取最近一次批处理运行及其逐步明细（P3-1）。"""
+    try:
+        for r in load_runs(1000):
+            if r.get("kind") == "batch":
+                run_id = r.get("run_id")
+                steps = load_steps(run_id) if run_id else []
+                return {"run": r, "steps": steps}
+        return {"run": None, "steps": []}
+    except Exception as exc:  # noqa: BLE001
+        return {"error": f"{type(exc).__name__}: {exc}"}
