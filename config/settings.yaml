@@ -183,3 +183,16 @@ scheduler:
   cron: "30 18 * * 1-5"         # 周一至周五 18:30
   timezone: "Asia/Shanghai"
   run_llm_after: "18:00"        # 避开 DeepSeek 峰谷 2x 定价
+
+# ---------------------------------------------------------------------
+# 失效告警（P2-3）：可插拔通道 + 阈值触发 + 每日摘要
+# 通道 type 支持：mock（默认/测试，不触网）、console（打印日志）、webhook（POST JSON）
+# 微信（Server 酱/企业微信应用）/ 邮件（SMTP）为扩展点，实现对应 Channel 子类即可。
+# channels 留空 → 默认 MockChannel（安全不触网，仅记录不发送）。
+# ---------------------------------------------------------------------
+notify:
+  channels: []
+  thresholds:
+    max_data_age_days: 3        # 最新信号距评估日的最大天数（容忍周末+节假日）
+    max_divergence: 20          # 单日多源分歧条数上限
+    max_dropped_predictors: 2   # 最新一批被 IC 闸门剔除的预测员数量上限

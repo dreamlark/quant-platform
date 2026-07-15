@@ -404,6 +404,13 @@ class Orchestrator:
         self.step_market_sentiment(target_date)
         self.step_llm(target_date)
         self.step_backtest(target_date)
+        # P2-3 失效告警：阈值触发 + 每日摘要（非致命；默认 Mock 通道不触网）
+        try:
+            from common.alert_monitor import monitor_run
+
+            monitor_run(self.repo, self.settings, as_of=target_date)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(f"[alert] 监控触发失败（不影响主流程）：{exc}")
         return {"date": target_date, "signals": len(signals)}
 
     # ---- 工具 ----------------------------------------------------
