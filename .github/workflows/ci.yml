@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install "pytest>=7.0"
+
+      # ---- P2-1 边界护栏：禁止 api 层直连 DuckDB ----
+      - name: Lint - API boundary guard
+        run: python tools/check_api_boundary.py
+
+      # ---- 应用可导入（默认响应类 + 异常处理器装配无误）----
+      - name: Lint - app importable
+        run: python -c "import sys; sys.path.insert(0, '.'); import api.main; print('app import OK')"
+
+      # ---- 资源校验（信息性：仅打印状态，不阻断构建；资源缺失时平台靠 mock/降级运行）----
+      - name: Resource check (informational)
+        run: python tools/fetch_resources.py --check || true
+
+      # ---- 全量单测 ----
+      - name: Pytest
+        run: python -m pytest -q
+
+      # ---- 冒烟：内存假数据跑通核心链路（ingest→…→signals 落库），无需网络/密钥/重型依赖 ----
+      - name: Smoke - core pipeline (in-memory)
+        run: python tests/test_smoke.py
