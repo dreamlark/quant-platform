@@ -36,6 +36,13 @@ _kronos_*.py
 _verify_*.py
 _verify_*.sh
 _probe_*.py
+# 沙箱端到端验证驱动（含硬编码路径，非产品代码）
+_run_*.py
+# 截图脚本（验证用）
+_shots*.py
+
+# ===== 验证截图（验证产物，不入库）=====
+screenshots/
 
 # ===== 调试报告 / 产物（开发期，不入库）=====
 _eval_*.txt
@@ -51,3 +58,6 @@ _*_cache.csv
 # _kronos_eval_ckpt_*.json  —— Kronos walk-forward 评估检查点（配权重可离线复用推理）
 # _today_prediction.md       —— 今日信号报告示例
 # 其余运行产物（_today_prediction.focused.md 等）仍不入库（见上方调试产物小节）
+
+# ===== 资源拉取临时缓存 =====
+.cache/

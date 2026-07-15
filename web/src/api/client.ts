@@ -71,6 +71,7 @@ export interface DashboardSummary {
   top_signals: Signal[];
   sectors: Sector[];
   watchlist_alerts: WatchItem[];
+  market_sentiment?: MarketSentimentView;
 }
 
 // 运维控制：更新/调度状态

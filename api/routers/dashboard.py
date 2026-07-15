@@ -1,16 +1,52 @@
 """Dashboard 路由：每日简报聚合（首页落地数据）。"""
 from __future__ import annotations
 
+import math
+import os
 from typing import Optional
+
+import numpy as np
+import pandas as pd
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from api.database import get_repository, get_settings
-from api.schemas import BriefOut, DashboardSummary, SectorOut, SignalOut, WatchOut
+from api.schemas import (
+    BriefOut,
+    DashboardSummary,
+    MarketSentimentView,
+    SectorOut,
+    SignalOut,
+    WatchOut,
+)
 from api.utils import resolve_date
 from storage.repository import Repository
 
 router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
+
+
+def _sanitize_val(v):
+    """把 inf/nan 转为 None（pydantic v2 json 序列化拒绝非有限浮点）。"""
+    if isinstance(v, (float, np.floating)):
+        fv = float(v)
+        if math.isnan(fv) or math.isinf(fv):
+            return None
+    if isinstance(v, (np.integer,)):
+        return int(v)
+    return v
+
+
+def _sanitize_df(df: pd.DataFrame) -> pd.DataFrame:
+    """将数值列的 inf/nan 清洗为 None，避免响应序列化 500。"""
+    if df is None or df.empty:
+        return df
+    out = df.copy()
+    for c in out.columns:
+        if pd.api.types.is_numeric_dtype(out[c]):
+            out[c] = out[c].apply(_sanitize_val)
+    return out
+
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
 @router.get("/summary", response_model=DashboardSummary)
@@ -25,6 +61,10 @@ def dashboard(date: Optional[str] = Query(None)):
     sectors = repo.load_sector(target)
     brief = repo.load_brief(target)
 
+    # 清洗 inf/nan（pydantic v2 的 json 序列化拒绝非有限浮点，否则 500）
+    signals = _sanitize_df(signals)
+    sectors = _sanitize_df(sectors)
+
     top = signals.sort_values("confidence", ascending=False).head(10) if not signals.empty else signals
     watch_codes = repo.load_watch_codes()
     alerts = _watchlist_alerts(repo, target, watch_codes)
@@ -36,6 +76,7 @@ def dashboard(date: Optional[str] = Query(None)):
         top_signals=[SignalOut(**r) for _, r in top.iterrows()],
         sectors=[SectorOut(**r) for _, r in sectors.iterrows()] if not sectors.empty else [],
         watchlist_alerts=alerts,
+        market_sentiment=_market_sentiment(repo),
     )
     return summary
 
@@ -57,6 +98,25 @@ def brief(date: Optional[str] = Query(None)):
         market_temperature=int(r["market_temperature"]),
         disclaimer=r["disclaimer"],
     )
+
+
+def _market_sentiment(repo: Repository) -> MarketSentimentView:
+    """市场级综合情绪指数（sentiment_index 最新一行），供 Dashboard 情绪卡。
+
+    复用 repo 既有 analytics 连接读取，避免与仓储读写连接冲突
+    （DuckDB 单文件单写者限制：同进程内不可同时存在 read_only 与 read_write 连接）。
+    """
+    try:
+        df = repo.load_sentiment_index(latest=True)
+        if df is None or df.empty:
+            return MarketSentimentView(available=False)
+        row = df.iloc[0].to_dict()
+        row["latest_date"] = str(row.get("date"))
+        row["available"] = True
+        clean = {k: _sanitize_val(v) for k, v in row.items() if k in MarketSentimentView.model_fields}
+        return MarketSentimentView(**clean)
+    except Exception as exc:  # noqa: BLE001
+        return MarketSentimentView(available=False, error=f"{type(exc).__name__}: {exc}")
 
 
 def _watchlist_alerts(repo: Repository, target, watch_codes) -> list[WatchOut]:

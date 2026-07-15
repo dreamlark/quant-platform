@@ -34,6 +34,16 @@ class SignalPool:
         self.w_pred = float(bw.get("predict", 0.25))
         self.scale = float(fusion.get("confidence_scale", 2.5))
         self.deadzone = 0.05
+        # —— regime 调节（PRD §8，默认关闭）——
+        # 市场情绪极端（恐惧/贪婪）时，仅缩放融合总信号**置信度**（不动方向）。
+        # 须经样本外回测验证（backtest/signal_backtest.py）后方可开启。
+        ra = fusion.get("regime_adjust", {})
+        self.regime_adjust_enabled = bool(ra.get("enabled", False))
+        self.regime_scale: Dict[str, float] = {
+            "恐惧": float(ra.get("fear_scale", 0.75)),
+            "中性": float(ra.get("neutral_scale", 1.0)),
+            "贪婪": float(ra.get("greed_scale", 0.75)),
+        }
         self.defs = load_factor_config()
         self.directions: Dict[str, int] = {
             f["name"]: int(f.get("direction", 1)) for f in self.defs
@@ -49,8 +59,14 @@ class SignalPool:
         predict_health_df: pd.DataFrame,
         date: dt.date,
         codes: Optional[List[str]] = None,
+        regime: Optional[str] = None,
     ) -> pd.DataFrame:
-        """融合四源，返回 ``signals`` 表（date 已固定为 ``date``）。"""
+        """融合四源，返回 ``signals`` 表（date 已固定为 ``date``）。
+
+        Args:
+            regime: 市场情绪 regime（恐惧/中性/贪婪）。若 ``fusion.regime_adjust.enabled``
+                为真且 regime 在缩放表内，则仅缩放综合置信度（不动方向）。
+        """
         factor_weights = dict(
             zip(health_df["factor_name"], health_df["weight"])
         ) if health_df is not None and not health_df.empty else {}
@@ -100,6 +116,14 @@ class SignalPool:
             elif total < -self.deadzone:
                 direction = -1
             confidence = float(round(float(sigmoid(abs(total) * self.scale)), 3))
+            # —— regime 调节：极端情绪缩放置信度（不动方向）——
+            if self.regime_adjust_enabled and regime in self.regime_scale:
+                k = self.regime_scale[regime]
+                if k != 1.0:
+                    confidence = float(round(min(1.0, confidence * k), 3))
+                    logger.debug(
+                        f"regime 调节 {date} {code}：{regime} 置信度×{k:.2f} → {confidence}"
+                    )
 
             tags = []
             if abs(fc) > 0.01:

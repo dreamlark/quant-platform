@@ -1,0 +1,42 @@
+{
+  "version": "2026-07-14",
+  "updated_at": "2026-07-15",
+  "description": "量化平台可选大资源（数据 + 模型）。仓库本身不含这些文件，按需用 tools/fetch_resources.py 拉取，避免人人本地全量重拉 akshare 行情导致 API 限流报错。",
+  "repo_slug": "dreamlark/quant-platform",
+  "tag": "resources-2026-07-14",
+  "base_url": "https://github.com/dreamlark/quant-platform/releases/download/resources-2026-07-14",
+  "auth_note": "本仓库为私有仓库：匿名公开下载地址会 404。协作者请设置环境变量 GITHUB_TOKEN（或 GH_TOKEN）后运行，脚本自动走鉴权 API 下载；也可 `export GITHUB_TOKEN=$(gh auth token)`。若仓库改为公开，则无需 token。",
+  "resources": {
+    "data": {
+      "name": "数据（行情 + 分析结果）",
+      "description": "market.duckdb（日线行情）、analytics.duckdb（因子/信号/回测/情绪指数等分析结果）、verify_snapshot.duckdb（验证快照）。解压到仓库 data/。",
+      "archive": "quant-platform-data-2026-07-14.tar.gz",
+      "sha256": "85334ffd654ab1640b03f7f1d65f63dbb4978a5c58ecc9e8057ca7504101d2d6",
+      "size_bytes": 403321194,
+      "extract_to": "data",
+      "files": [
+        "market.duckdb",
+        "analytics.duckdb",
+        "verify_snapshot.duckdb"
+      ]
+    },
+    "models": {
+      "name": "模型权重（离线推理）",
+      "description": "Kronos 等离线模型权重（_local_kronos_weights/）。解压到仓库根目录。缺模型时预测源自动降级，不影响核心链路。",
+      "archive": "quant-platform-models-2026-07-14.tar.gz",
+      "sha256": "3ba11310d4de41041630ca45b03fd4dd351086a8bf43ac10acf84f2e7b30d3de",
+      "size_bytes": 106591628,
+      "extract_to": ".",
+      "files": [
+        "_local_kronos_weights/"
+      ]
+    }
+  },
+  "regenerable_excluded": [
+    "data/raw_cache/（行情原始缓存，可重拉，不分发）",
+    "web/dist/（前端构建产物，pnpm build 生成）",
+    "_vendor/（第三方代码，由 bootstrap 脚本拉取）",
+    "*.log（运行日志）"
+  ],
+  "usage": "GITHUB_TOKEN=xxx python tools/fetch_resources.py --all | --data | --models   （可选 --check 仅校验，--force 强制覆盖）"
+}

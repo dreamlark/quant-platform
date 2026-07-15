@@ -223,7 +223,7 @@ _run_real.py ──▶ scheduler.orchestrator
 
 ## 5. 目录结构与逐文件作用
 
-### 5.1 完整目录树（已入库 105 文件）
+### 5.1 完整目录树（已入库 110 文件）
 
 ```
 quant-platform/
@@ -342,7 +342,7 @@ quant-platform/
 
 | 文件 | 作用 |
 |------|------|
-| `fusion/signal_pool.py` | 四源加权融合 → `signals`（权重见 §4.5，`predict_min_dir_acc` 兜底） |
+| `fusion/signal_pool.py` | 四源加权融合 → `signals`（权重见 §4.5，`predict_min_dir_acc` 兜底）；含 `regime_adjust` 钩子（市场情绪极端时**仅缩放置信度**，默认 OFF，见 §8.3） |
 | `fusion/sector.py` | 板块轮动 / 强弱排名（DuckDB 聚合，零重框架） |
 | `fusion/push.py` | 信号推送预留接口（P2，首版仅看板内展示，未实现） |
 
@@ -396,6 +396,8 @@ quant-platform/
 | `backtest/report.py` | 绩效报告（quantstats 懒加载） |
 | `backtest/qlib_backtest.py` | qlib 交叉验证（可选） |
 | `backtest/bt_backtest.py` | backtrader 交叉验证（可选） |
+| `backtest/sentiment_timing.py` | **T2 温度计择时回测**（PRD §10 验收）：`sentiment_index.signal` 作权益暴露叠加层，滚动样本外验证年化/回撤/超额 |
+| `backtest/signal_backtest.py` | **信号层组合回测**（#4 regime 调节验证）：置信度加权多头组合，支持 regime 缩放 ON/OFF 对比（`compare_regime`） |
 
 #### 5.3.12 `tests/`
 
@@ -409,6 +411,9 @@ quant-platform/
 | `tests/test_prediction_kronos_integration.py` | 预测+Kronos 集成测试 |
 | `tests/test_sentiment_t0.py` | T0 量价代理情绪单测（形状/范围/组件/无前视） |
 | `tests/test_market_sentiment.py` | 市场级综合情绪指数单测（五维合成/GSISI/无前视/外部数据） |
+| `tests/test_sentiment_timing.py` | T2 温度计择时回测单测（非空气流/三组指标/exposure 映射/降级） |
+| `tests/test_signal_backtest.py` | 信号层组合回测 + regime 缩放 ON/OFF 对比单测 |
+| `tests/test_regime_adjust.py` | 融合层 regime 调节单测（默认 OFF/极端缩放/方向不变/中性不调） |
 | `tests/_dbg_kronos_load.py` | 调试：Kronos 权重加载 |
 | `tests/_smoke_kronos_live.py` | 调试：Kronos 实跑冒烟 |
 | `tests/stub_model/model/__init__.py` | 测试桩模型（模拟预测源） |
@@ -466,7 +471,33 @@ git clone https://github.com/dreamlark/quant-platform.git
 cd quant-platform
 ```
 
-> 仓库不含 110M 的 Kronos 权重（已 gitignore）。预测能力补回方式见 §10.4。
+> 仓库**刻意保持精简**：不含行情数据（`data/`）与模型权重（`_local_kronos_weights/`）。二者作为可选「参考数据源」托管在 GitHub Release，按需拉取（见 §7.1.1），避免协作者人人本地全量重拉 akshare 行情导致上游 API 限流报错。
+
+### 7.1.1 可选大资源（数据 / 模型）按需拉取
+
+仓库本体只含**代码 + 资源清单 `resources/manifest.json` + 拉取脚本 `tools/fetch_resources.py`**。大文件（行情 DuckDB、模型权重）以 **GitHub Release 资产**形式分发，拉取时做 **sha256 校验**，clone 后可自行决定要不要拉、拉哪些。
+
+```bash
+# 私有仓库：匿名公开下载会 404，需先设置 token（repo 权限即可）
+export GITHUB_TOKEN=$(gh auth token)     # 或手动贴 PAT
+# 拉全部（数据 + 模型）
+python tools/fetch_resources.py --all
+# 只拉数据 / 只拉模型
+python tools/fetch_resources.py --data
+python tools/fetch_resources.py --models
+# 仅校验本地已下载文件的 sha256，不下载
+python tools/fetch_resources.py --check
+# 强制覆盖已存在的文件
+python tools/fetch_resources.py --all --force
+```
+
+| 资源 | 内容 | 解压位置 | 体积（压缩 / 解压） | 不拉会怎样 |
+|------|------|----------|--------------------|-----------|
+| `data` | `market.duckdb`（日线行情）+ `analytics.duckdb`（因子/信号/回测/情绪指数）+ `verify_snapshot.duckdb` | `data/` | ~385 MB / ~720 MB | 无本地行情；需自行用 akshare 跑 `step_ingest` 重拉 |
+| `models` | `_local_kronos_weights/`（Kronos 等离线权重） | 仓库根 | ~102 MB / ~110 MB | 预测第 4 源自动降级，因子/技术/情绪/回测不受影响 |
+
+> **为什么这样设计**：参考数据源 = 一份可复用快照。协作者 clone 后要么直接拉这份快照（秒级、零上游压力），要么完全本地重跑（自行承担 akshare 限流风险）。仓库公开后匿名下载即生效，无需 token。
+> 若想拿**最新** Kronos 权重而非快照，仍可用 `bootstrap_kronos.sh` / `download_kronos_weights.py` 从官方/镜像端点单独拉取。
 
 ### 7.2 依赖安装（二选一）
 
@@ -627,6 +658,10 @@ pnpm build && pnpm preview
 | `fusion.base_weights.predict` | `0.25` | 预测源权重 |
 | `fusion.confidence_scale` | `2.5` | 信号置信度缩放（映射到输出强度） |
 | `fusion.predict_min_dir_acc` | `0.52` | 预测源最低方向准确率，低于则降权为 0 |
+| `fusion.regime_adjust.enabled` | `false` | **regime 调节总开关（PRD §8 默认 OFF）**：启用前须经 `backtest/signal_backtest.compare_regime` 样本外验证（见下） |
+| `fusion.regime_adjust.fear_scale` | `0.75` | 恐惧（过度恐慌）时综合置信度 ×0.75 |
+| `fusion.regime_adjust.greed_scale` | `0.75` | 贪婪（过度乐观）时综合置信度 ×0.75 |
+| `fusion.regime_adjust.neutral_scale` | `1.0` | 中性不调节 |
 
 **`kronos` / `health_check` / `sentiment`**
 
@@ -662,6 +697,15 @@ pnpm build && pnpm preview
 | `market_sentiment.gsisi_weeks` | `8` | GSISI 取最近 N 周行业周收益与 Beta 排序相关性 |
 
 > 缺失维度自动剔除后权重归一化；量/价两维仅依赖本平台 bars，外部数据（资金/估值/利率/新闻）缺失时整体降级为空，不阻断核心链路。
+
+**情绪回测 / regime 调节验证**（盘后 `step_backtest` 第 4、5 引擎，均 try/except 降级）
+
+| 引擎 | 作用 | 输出 |
+|------|------|------|
+| 第 4 引擎 `SentimentTimingBacktester` | T2 温度计择时样本外验证（PRD §10 硬指标）：把 `sentiment_index.signal` 作权益暴露叠加在因子 walk-forward 组合上，对照因子满仓 baseline 与等权基准，报告年化/最大回撤/超额 | `backtest_report` 中 `walk_forward_sentiment_timing` / `walk_forward_factor_baseline` |
+| 第 5 引擎 `compare_regime` | #4 regime 调节启用前门槛：信号层置信度加权多头组合，ON（regime 缩放）/OFF 双跑，差异仅来自情绪缩放 | `backtest_report` 中 `signal_long_only` / `signal_long_only_regime_scaled`，日志打印 ON-OFF 年化/Sharpe/回撤差异（正=改善，可据此决定是否开 `regime_adjust.enabled`） |
+
+> 第 5 引擎需 ≥20 日信号历史方可回测；随每日运行累积后自动生效（单日运行自动跳过）。
 
 **`backtest`**
 

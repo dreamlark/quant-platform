@@ -110,6 +110,23 @@ class BacktestOut(BaseModel):
     deflated_sharpe: float
 
 
+class MarketSentimentView(BaseModel):
+    """市场综合情绪指数视图（Monitor / Dashboard 双卡共用）。"""
+    available: bool = False
+    latest_date: Optional[str] = None
+    index_value: Optional[float] = None
+    sub_volume: Optional[float] = None
+    sub_price: Optional[float] = None
+    sub_money: Optional[float] = None
+    sub_valuation: Optional[float] = None
+    sub_riskpremium: Optional[float] = None
+    gsisi: Optional[float] = None
+    regime: Optional[str] = None  # 恐惧 / 中性 / 贪婪
+    thermometer: Optional[float] = None
+    signal: Optional[str] = None  # 买入 / 半仓 / 空仓
+    error: Optional[str] = None
+
+
 class DashboardSummary(BaseModel):
     date: DateStr
     market_temperature: int
@@ -117,3 +134,4 @@ class DashboardSummary(BaseModel):
     top_signals: List[SignalOut] = []
     sectors: List[SectorOut] = []
     watchlist_alerts: List[WatchOut] = []
+    market_sentiment: Optional[MarketSentimentView] = None  # 市场情绪指数卡（PRD §8 双卡）

@@ -86,13 +86,9 @@ class UpdateManager:
             codes = df["code"].astype(str).str.zfill(6).tolist()
             names = df["name"].astype(str).tolist()
         except Exception:
-            import duckdb
-
-            con = duckdb.connect("data/market.duckdb", read_only=True)
-            rows = con.execute(
+            rows = repo.market.execute(
                 "SELECT DISTINCT code, name FROM universe WHERE in_universe=TRUE"
             ).fetchall()
-            con.close()
             codes = [str(r[0]).zfill(6) for r in rows]
             names = [str(r[1]) for r in rows]
 

@@ -31,6 +31,8 @@ from backtest.report import generate_report, summarize_metrics
 from backtest.walk_forward import WalkForwardBacktester
 from backtest.qlib_backtest import run_qlib_backtest
 from backtest.bt_backtest import run_backtrader
+from backtest.sentiment_timing import SentimentTimingBacktester
+from backtest.signal_backtest import compare_regime
 from sources.adjust import adjust_prices
 from sources.universe import UniverseFilter
 from storage.repository import Repository
@@ -190,6 +192,9 @@ class Orchestrator:
     def step_fusion(self, date: dt.date) -> pd.DataFrame:
         uni = self.repo.load_universe(date, in_universe=True)
         codes = uni["code"].tolist()
+        # regime 调节：使用最近一次（T-1）市场情绪 regime（point-in-time 正确——
+        # 当日情绪指数在 step_market_sentiment 之后才落库，不能用于当日信号）。
+        regime = self._latest_regime()
         signals = self.signal_pool.fuse(
             self.neutralized,
             self.tech_df,
@@ -199,9 +204,20 @@ class Orchestrator:
             self.predict_health,
             date,
             codes,
+            regime=regime,
         )
         self.repo.save_signals(signals)
         return signals
+
+    def _latest_regime(self) -> Optional[str]:
+        """读取最近一次市场情绪 regime（供融合层 regime 调节用）。"""
+        try:
+            idx = self.repo.load_sentiment_index(latest=True)
+            if idx is not None and not idx.empty and "regime" in idx.columns:
+                return str(idx.iloc[0]["regime"])
+        except Exception as exc:  # noqa: BLE001
+            logger.debug(f"融合层读取 regime 失败（降级为无调节）：{exc}")
+        return None
 
     def step_sector(self, date: dt.date) -> pd.DataFrame:
         bars = self.repo.load_bars(end=date)
@@ -324,6 +340,49 @@ class Orchestrator:
                         all_rows.append(bt_rows)
         except Exception as exc:  # noqa: BLE001
             logger.warning(f"backtrader 技术分回测交叉验证失败，跳过：{exc}")
+
+        # 4) T2 温度计择时回测（PRD §10 验收硬指标）：情绪信号叠加权益暴露
+        try:
+            sentiment_idx = self.repo.load_sentiment_index(latest=False)
+            if (
+                sentiment_idx is not None
+                and not sentiment_idx.empty
+                and "signal" in sentiment_idx.columns
+            ):
+                st_bt = SentimentTimingBacktester(self.settings)
+                _, _, st_rows = st_bt.run(bars, self.neutralized, uni, sentiment_idx)
+                if not st_rows.empty:
+                    self.repo.save_backtest(st_rows)
+                    all_rows.append(st_rows)
+            else:
+                logger.debug("T2 温度计择时回测跳过：sentiment_index 历史不足")
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(f"T2 温度计择时回测失败，跳过：{exc}")
+
+        # 5) regime 调节验证（PRD §8 启用门槛）：信号层 ON/OFF 对比，差异仅来自情绪缩放。
+        #    需多日信号历史方可回测；数据不足时降级跳过（随每日运行累积后自动生效）。
+        try:
+            sig_hist = self.repo.load_signals_all()
+            if sig_hist is not None and not sig_hist.empty and sig_hist["date"].nunique() >= 20:
+                sentiment_idx = self.repo.load_sentiment_index(latest=False)
+                rows_off, rows_on, delta = compare_regime(
+                    bars, sig_hist, uni, sentiment_idx, self.settings
+                )
+                if not rows_off.empty:
+                    self.repo.save_backtest(rows_off)
+                    all_rows.append(rows_off)
+                if not rows_on.empty:
+                    self.repo.save_backtest(rows_on)
+                    all_rows.append(rows_on)
+                logger.info(
+                    f"regime 调节验证 ON-OFF 差异：年化 {delta['ann_return'] * 100:.2f}%/"
+                    f"Sharpe {delta['sharpe']:.3f}/回撤 {delta['max_drawdown'] * 100:.2f}%"
+                    f"（正=改善，可据此决定是否开启 fusion.regime_adjust.enabled）"
+                )
+            else:
+                logger.debug("regime 调节验证跳过：信号历史不足 20 日")
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(f"regime 调节验证失败，跳过：{exc}")
 
         if all_rows:
             return pd.concat(all_rows, ignore_index=True)

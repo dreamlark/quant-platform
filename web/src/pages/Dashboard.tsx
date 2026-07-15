@@ -4,13 +4,39 @@ import {
   Button, Switch, Space, Progress, Alert, Tooltip,
 } from 'antd';
 import {
-  api, DashboardSummary, Signal, Sector, WatchItem,
+  api, DashboardSummary, Signal, Sector, WatchItem, MarketSentimentView,
   UpdateStatus, triggerUpdate, getUpdateStatus, startAuto, stopAuto,
 } from '../api/client';
 import { EChart, AXIS_STYLE, baseGrid } from '../components/charts';
 import { COLORS } from '../theme';
 
 const { Title, Paragraph, Text } = Typography;
+
+const REGIME_COLOR: Record<string, string> = {
+  恐惧: 'red',
+  中性: 'default',
+  贪婪: 'green',
+};
+const SIGNAL_COLOR: Record<string, string> = {
+  买入: 'green',
+  半仓: 'gold',
+  空仓: 'red',
+};
+
+function subBar(label: string, v: number | null | undefined) {
+  if (v == null) return null;
+  return (
+    <div style={{ marginTop: 4 }}>
+      <Text type="secondary" style={{ fontSize: 12 }}>{label}：{v.toFixed(1)}</Text>
+      <Progress
+        percent={Math.round(v)}
+        size="small"
+        showInfo={false}
+        strokeColor={v >= 50 ? COLORS.up : COLORS.down}
+      />
+    </div>
+  );
+}
 
 function dirTag(d: number) {
   if (d === 1) return <Tag color="red">看多</Tag>;
@@ -127,6 +153,47 @@ export default function Dashboard() {
     ],
   };
 
+  // —— 市场情绪指数卡（PRD §8 双卡：Dashboard 侧）——
+  const ms: MarketSentimentView | undefined = data.market_sentiment;
+  const sentimentCard = (
+    <Card className="metric-card" title="市场情绪指数（T1/T2/T3）">
+      {!ms || !ms.available ? (
+        <Text type="secondary">
+          {ms?.error ? ms.error : '暂无市场情绪数据（运行一次盘后流水线后生成）'}
+        </Text>
+      ) : (
+        <>
+          <Row gutter={16} align="middle">
+            <Col span={10}>
+              <Statistic title="综合情绪指数" value={ms.index_value ?? '-'} precision={1} />
+            </Col>
+            <Col span={14}>
+              <div>
+                <Tag color={REGIME_COLOR[ms.regime || ''] || 'default'}>{ms.regime || '-'}</Tag>
+                <Tag color={SIGNAL_COLOR[ms.signal || ''] || 'default'}>{ms.signal || '-'}</Tag>
+              </div>
+              <div style={{ marginTop: 6 }}>
+                <Text type="secondary" style={{ fontSize: 12 }}>
+                  温度计 {ms.thermometer ?? '-'} · GSISI {ms.gsisi ?? '-'}
+                </Text>
+              </div>
+            </Col>
+          </Row>
+          <div style={{ marginTop: 8 }}>
+            {subBar('量能分', ms.sub_volume)}
+            {subBar('价格分', ms.sub_price)}
+            {subBar('资金分', ms.sub_money)}
+            {subBar('估值分', ms.sub_valuation)}
+            {subBar('风险溢价分', ms.sub_riskpremium)}
+          </div>
+          <div style={{ marginTop: 6 }}>
+            <Text type="secondary" style={{ fontSize: 12 }}>更新日 {ms.latest_date}</Text>
+          </div>
+        </>
+      )}
+    </Card>
+  );
+
   const st = status ? STATUS_META[status.status] || STATUS_META.idle : STATUS_META.idle;
   const pct = status && status.total ? Math.round((status.progress / status.total) * 100) : 0;
 
@@ -210,6 +277,9 @@ export default function Dashboard() {
             )}
           </Card>
         </Col>
+      </Row>
+      <Row gutter={16} style={{ marginTop: 16 }}>
+        <Col span={24}>{sentimentCard}</Col>
       </Row>
       <Row gutter={16}>
         <Col span={14}>

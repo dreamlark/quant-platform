@@ -148,6 +148,10 @@ class Repository:
     def load_signals(self, date: dt.date) -> pd.DataFrame:
         return self._read("signals", "SELECT * FROM signals WHERE date = ?", [date])
 
+    def load_signals_all(self) -> pd.DataFrame:
+        """加载全量信号（跨日期，用于 regime 调节样本外验证等历史回测）。"""
+        return self._read("signals", "SELECT * FROM signals ORDER BY date")
+
     def load_signal_detail(self, date: dt.date, code: str) -> Optional[Dict]:
         """信号拆解下钻（F-11/T11）：四源贡献 + 因子明细 + 预测明细。"""
         sig = self._read(

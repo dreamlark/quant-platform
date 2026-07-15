@@ -64,6 +64,14 @@ fusion:
   # 预测源：效果不佳经 predict_health 自动降权，不进核心权重
   predict_min_dir_acc: 0.52
   predict_experimental_below: 0.52
+  # regime 调节（PRD §8，默认关闭）：市场情绪极端（恐惧/贪婪）时，仅缩放融合总信号
+  # 置信度（不动方向）。开启前须经样本外回测验证（backtest/signal_backtest.py ON/OFF 对比，
+  # 择时/风险收益改善方可开启）。scale<1 表示极端情绪下降低综合置信度（保守）。
+  regime_adjust:
+    enabled: false
+    fear_scale: 0.75             # 恐惧（过度恐慌）时置信度 ×0.75
+    greed_scale: 0.75            # 贪婪（过度乐观）时置信度 ×0.75
+    neutral_scale: 1.0           # 中性不调节
 
 # ---------------------------------------------------------------------
 # Kronos 预测基础模型（融合第 4 源）

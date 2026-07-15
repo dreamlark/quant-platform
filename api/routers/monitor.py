@@ -25,28 +25,20 @@ from api.run_store import load_runs  # noqa: E402
 
 router = APIRouter(prefix="/api/monitor", tags=["monitor"])
 
-MARKET = os.path.join(ROOT, "data", "market.duckdb")
-ANALYTICS = os.path.join(ROOT, "data", "analytics.duckdb")
-
 # 过期阈值（天）：>4 天可视作错过了一个以上交易日（覆盖周末）
 STALE_DAYS = 4
 
 
-def _ropen(path: str):
-    import duckdb
-
-    return duckdb.connect(path, read_only=True)
-
-
 def _data_status() -> dict:
     try:
-        con = _ropen(MARKET)
+        from api.database import get_repository
+
+        con = get_repository().market
         row = con.execute("SELECT max(date), count(distinct code) FROM daily_bars").fetchone()
         latest, n_codes = row[0], row[1]
         u = con.execute(
             "SELECT count(*) FROM universe WHERE in_universe=TRUE AND date=(SELECT max(date) FROM universe)"
         ).fetchone()[0]
-        con.close()
         days_since = (dt.date.today() - latest).days if latest else None
         is_stale = bool(days_since is not None and days_since > STALE_DAYS)
         return {
@@ -62,16 +54,16 @@ def _data_status() -> dict:
 
 def _factor_health() -> dict:
     try:
-        con = _ropen(ANALYTICS)
+        from api.database import get_repository
+
+        con = get_repository().analytics
         d = con.execute("SELECT max(date) FROM factor_health").fetchone()[0]
         if not d:
-            con.close()
             return {"latest_date": None, "total": 0, "by_status": {}, "avg_icir": None}
         rows = con.execute(
-            f"SELECT status, count(*) FROM factor_health WHERE date=? GROUP BY status", [d]
+            "SELECT status, count(*) FROM factor_health WHERE date=? GROUP BY status", [d]
         ).fetchall()
         avg = con.execute("SELECT avg(icir) FROM factor_health WHERE date=?", [d]).fetchone()[0]
-        con.close()
         by_status = {s: c for s, c in rows}
         return {
             "latest_date": str(d),
@@ -85,8 +77,9 @@ def _factor_health() -> dict:
 
 def _model_status() -> list:
     try:
-        con = _ropen(ANALYTICS)
-        # 各模型最新日期
+        from api.database import get_repository
+
+        con = get_repository().analytics
         ph = con.execute(
             "SELECT model_name, max(date) FROM predict_health GROUP BY model_name"
         ).fetchall()
@@ -109,7 +102,6 @@ def _model_status() -> list:
                     "coverage_count": cov,
                 }
             )
-        con.close()
         return out
     except Exception as exc:  # noqa: BLE001
         return [{"error": f"{type(exc).__name__}: {exc}"}]
@@ -117,11 +109,12 @@ def _model_status() -> list:
 
 def _other_freshness() -> dict:
     try:
-        con = _ropen(ANALYTICS)
+        from api.database import get_repository
+
+        con = get_repository().analytics
         sig = con.execute("SELECT max(date) FROM signals").fetchone()[0]
         sec = con.execute("SELECT max(date) FROM sector_rotation").fetchone()[0]
         brf = con.execute("SELECT max(date) FROM daily_brief").fetchone()[0]
-        con.close()
         return {
             "signals_date": str(sig) if sig else None,
             "sector_date": str(sec) if sec else None,
@@ -132,18 +125,21 @@ def _other_freshness() -> dict:
 
 
 def _market_sentiment() -> dict:
-    """市场级综合情绪指数（sentiment_index 最新一行）。"""
+    """市场级综合情绪指数（sentiment_index 最新一行）。
+
+    复用 repo 既有 analytics 连接读取，避免与仓储读写连接冲突
+    （DuckDB 单文件单写者限制：同进程内不可同时存在 read_only 与 read_write 连接）。
+    """
     try:
-        con = _ropen(ANALYTICS)
+        from api.database import get_repository
+
+        con = get_repository().analytics
         d = con.execute("SELECT max(date) FROM sentiment_index").fetchone()[0]
         if not d:
-            con.close()
             return {"latest_date": None, "available": False}
-        row = con.execute(
-            "SELECT * FROM sentiment_index WHERE date=?", [d]
-        ).fetchone()
-        cols = [c[0] for c in con.description] if con.description else []
-        con.close()
+        cur = con.execute("SELECT * FROM sentiment_index WHERE date=?", [d])
+        row = cur.fetchone()
+        cols = [c[0] for c in cur.description] if cur.description else []
         rec = dict(zip(cols, row)) if row else {}
         rec["latest_date"] = str(d)
         rec["available"] = True
