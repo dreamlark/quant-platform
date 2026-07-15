@@ -40,6 +40,19 @@ class CostModel:
             return price > limit_down  # 跌停卖不出
         return True
 
+    def tradable_buy(self, price: Optional[float], pre_close: Optional[float]) -> bool:
+        """买入可交易性（涨跌停约束 + 缺数据保护）。
+
+        回测在交易日 t 建仓前调用：若 t 日该股涨停则不可买入，应剔除出组合。
+        ``pre_close``/``price`` 缺失或为 0（如首日/数据缺口）时无法判定涨跌停，
+        保守视为可交易，避免过度剔除。
+        """
+        if price is None or pre_close is None:
+            return True
+        if pre_close <= 0 or price <= 0:
+            return True
+        return self.can_trade("buy", float(price), float(pre_close))
+
     # ---- 成本计算 ------------------------------------------------
     def commission_of(self, value: float) -> float:
         if value <= 0:

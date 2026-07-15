@@ -60,11 +60,25 @@ class SignalBacktester:
 
         price = bars_df.pivot_table(index="date", columns="code", values="adj_back_close")
         fwd = price.shift(-1) / price - 1.0
+        # 涨跌停流动性约束所需（P1-3）：交易日 t 的 close / pre_close
+        # 缺列则降级为不做涨跌停拦截（tradable_buy 返回 True）
+        close_px = (
+            bars_df.pivot_table(index="date", columns="code", values="close")
+            if "close" in bars_df.columns
+            else pd.DataFrame()
+        )
+        pre_close_px = (
+            bars_df.pivot_table(index="date", columns="code", values="pre_close")
+            if "pre_close" in bars_df.columns
+            else pd.DataFrame()
+        )
         if universe_df is not None and not universe_df.empty:
             inv = universe_df[universe_df["in_universe"]]["code"].unique()
             keep = [c for c in price.columns if c in inv]
             price = price[keep]
             fwd = fwd[keep]
+            close_px = close_px[keep]
+            pre_close_px = pre_close_px[keep]
 
         sig = signals[["date", "code", "direction", "confidence"]].copy()
         sig["date"] = pd.to_datetime(sig["date"]).dt.date
@@ -74,7 +88,7 @@ class SignalBacktester:
         if regime_series and scale_map:
             shifted = self._shift_regime(regime_series)
 
-        rows: List[Tuple[dt.date, float, float]] = []
+        rows: List[Tuple[dt.date, float, float, float]] = []
         prev_w: Optional[pd.Series] = None
         for t in price.index:
             if t not in fwd.index:
@@ -85,7 +99,7 @@ class SignalBacktester:
             longs = s_t[s_t["direction"] == 1]
             if longs.empty:
                 r = fwd.loc[t]
-                rows.append((t, 0.0, float(r.mean())))  # 无看多信号 → 全现金
+                rows.append((t, 0.0, float(r.mean()), 0.0))  # 无看多信号 → 全现金
                 prev_w = None
                 continue
             conf = longs.set_index("code")["confidence"].astype(float)
@@ -95,13 +109,20 @@ class SignalBacktester:
             held = conf[conf >= self.conf_threshold]
             if self.max_hold:
                 held = held.sort_values(ascending=False).head(int(self.max_hold))
+            # P1-3 涨跌停约束：剔除当日涨停不可买入之名
+            held = held[held.index.map(
+                lambda c: self.cost.tradable_buy(
+                    close_px[c].get(t) if c in close_px.columns else None,
+                    pre_close_px[c].get(t) if c in pre_close_px.columns else None,
+                )
+            )]
             r = fwd.loc[t]
             if held.empty:
-                rows.append((t, 0.0, float(r.mean())))
+                rows.append((t, 0.0, float(r.mean()), 0.0))
                 prev_w = None
                 continue
             w = held / held.sum()  # 置信度加权（满仓多头）
-            port_ret = float((w * r).reindex(w.index).fillna(0.0).sum())
+            gross = float((w * r).reindex(w.index).fillna(0.0).sum())
             bench_ret = float(r.mean())
             # 换手成本
             if prev_w is None:
@@ -111,13 +132,13 @@ class SignalBacktester:
                 c = w.reindex(idx).fillna(0.0)
                 p = prev_w.reindex(idx).fillna(0.0)
                 turnover = float((c - p).abs().sum() / 2.0)
-            port_ret -= turnover * self.cost.round_trip_cost_rate()
-            rows.append((t, port_ret, bench_ret))
+            port_ret = gross - turnover * self.cost.round_trip_cost_rate()
+            rows.append((t, port_ret, bench_ret, gross))
             prev_w = w
 
         if not rows:
             return pd.DataFrame(), {}, pd.DataFrame()
-        ret_df = pd.DataFrame(rows, columns=["date", "port_ret", "bench_ret"])
+        ret_df = pd.DataFrame(rows, columns=["date", "port_ret", "bench_ret", "gross_ret"])
         metrics = self._metrics(ret_df)
         report_rows = self._report(ret_df, metrics)
         logger.info(
@@ -154,6 +175,9 @@ class SignalBacktester:
         sharpe = p.mean() / sd * np.sqrt(252) if sd > 0 else 0.0
         cum = (1.0 + p).cumprod()
         mdd = float(((cum - cum.cummax()) / cum.cummax()).min())
+        # 毛收益年化（P1-3）
+        g = ret_df["gross_ret"].dropna() if "gross_ret" in ret_df.columns else p
+        g_ann = (1.0 + g.mean()) ** 252 - 1.0 if (len(g) >= 5 and g.mean() > -1) else float("nan")
         alpha_ann = 0.0
         beta = 0.0
         try:
@@ -165,7 +189,8 @@ class SignalBacktester:
         except Exception:  # noqa: BLE001
             pass
         return {
-            "ann_return": float(ann),
+            "ann_return": float(ann),          # 净收益（头条）
+            "ann_return_gross": float(g_ann),  # 毛收益
             "sharpe": float(sharpe),
             "max_drawdown": mdd,
             "deflated_sharpe": deflated_sharpe(p),

@@ -77,11 +77,26 @@ class WalkForwardBacktester:
         price = bars_df.pivot_table(index="date", columns="code", values="adj_back_close")
         fwd = price.shift(-1) / price - 1.0  # 次日收益（point-in-time）
 
+        # 涨跌停流动性约束所需（P1-3）：交易日 t 的 close / pre_close
+        # 缺列（如部分冒烟数据）则降级为不做涨跌停拦截（tradable_buy 返回 True）
+        close_px = (
+            bars_df.pivot_table(index="date", columns="code", values="close")
+            if "close" in bars_df.columns
+            else pd.DataFrame()
+        )
+        pre_close_px = (
+            bars_df.pivot_table(index="date", columns="code", values="pre_close")
+            if "pre_close" in bars_df.columns
+            else pd.DataFrame()
+        )
+
         # 作用域
         if universe_df is not None and not universe_df.empty:
             inv = universe_df[universe_df["in_universe"]]["code"].unique()
             price = price[[c for c in price.columns if c in inv]]
             fwd = fwd[[c for c in fwd.columns if c in inv]]
+            close_px = close_px[[c for c in close_px.columns if c in inv]]
+            pre_close_px = pre_close_px[[c for c in pre_close_px.columns if c in inv]]
 
         # 因子宽表
         fwide = factor_long.pivot_table(
@@ -98,6 +113,7 @@ class WalkForwardBacktester:
 
         port_ret: List[Tuple[dt.date, float]] = []
         bench_ret: List[Tuple[dt.date, float]] = []
+        gross_ret: List[Tuple[dt.date, float]] = []
         prev_w = None
         start = 0
         while start + self.train_window + 1 <= n:
@@ -115,25 +131,39 @@ class WalkForwardBacktester:
                 if alpha is None or alpha.dropna().empty:
                     prev_w = None
                     continue
-                # 选 alpha 最高的 top_frac 等权
-                k = max(1, int(self.top_frac * alpha.notna().sum()))
-                longs = alpha.dropna().sort_values(ascending=False).head(k).index
-                w = pd.Series(0.0, index=alpha.index)
-                w[longs] = 1.0 / k
                 # 当日收益（t 的持仓赚 t->t+1 的收益，即 fwd[t]）
                 r = fwd.loc[t]
-                pret = float((w * r).sum())
+                # 选 alpha 最高的 top_frac 等权
+                k = max(1, int(self.top_frac * alpha.notna().sum()))
+                sel = alpha.dropna().sort_values(ascending=False).head(k).index
+                # P1-3 涨跌停约束：剔除当日涨停不可买入之名（close 达涨停则买不进）
+                sel = [
+                    c
+                    for c in sel
+                    if self.cost.tradable_buy(
+                        close_px[c].get(t) if c in close_px.columns else None,
+                        pre_close_px[c].get(t) if c in pre_close_px.columns else None,
+                    )
+                ]
+                if not sel:
+                    rows.append((t, 0.0, float(r.mean())))
+                    prev_w = None
+                    continue
+                w = pd.Series(0.0, index=alpha.index)
+                w[sel] = 1.0 / len(sel)
+                gross = float((w * r).sum())
                 # 成本（换手）
                 if prev_w is not None:
                     turnover = float((w - prev_w).abs().sum() / 2.0)
                 else:
                     turnover = 1.0
                 cost_frac = turnover * self.cost.round_trip_cost_rate()
-                pret -= cost_frac
+                pret = gross - cost_frac
                 # 基准：等权
                 bret = float(r.mean())
                 port_ret.append((t, pret))
                 bench_ret.append((t, bret))
+                gross_ret.append((t, gross))
                 prev_w = w
             start += self.step
 
@@ -141,12 +171,13 @@ class WalkForwardBacktester:
             return pd.DataFrame(), {}, pd.DataFrame()
         ret_df = pd.DataFrame(port_ret, columns=["date", "port_ret"])
         bench_df = pd.DataFrame(bench_ret, columns=["date", "bench_ret"])
-        ret_df = ret_df.merge(bench_df, on="date")
+        gross_df = pd.DataFrame(gross_ret, columns=["date", "gross_ret"])
+        ret_df = ret_df.merge(bench_df, on="date").merge(gross_df, on="date")
         metrics = self._metrics(ret_df)
         report_rows = self._report(ret_df, metrics)
         logger.info(
             f"walk-forward 回测完成：样本外 {len(ret_df)} 日，"
-            f"年化 {metrics.get('ann_return',0)*100:.1f}%，"
+            f"净年化 {metrics.get('ann_return',0)*100:.1f}%（毛 {metrics.get('ann_return_gross',0)*100:.1f}%），"
             f"Sharpe {metrics.get('sharpe',0):.2f}，"
             f"DeflatedSharpe {metrics.get('deflated_sharpe',0):.2f}"
         )
@@ -214,9 +245,20 @@ class WalkForwardBacktester:
         ann = (1.0 + p.mean()) ** 252 - 1.0 if p.mean() > -1 else float("nan")
         sharpe = p.mean() / p.std(ddof=1) * np.sqrt(252) if p.std(ddof=1) > 0 else 0.0
         bsharpe = b.mean() / b.std(ddof=1) * np.sqrt(252) if b.std(ddof=1) > 0 else 0.0
-        # 最大回撤
+        # 最大回撤（净）
         cum = (1.0 + p).cumprod()
         mdd = float(((cum - cum.cummax()) / cum.cummax()).min())
+        # 毛收益年化（P1-3：与净收益对照，揭示成本侵蚀）
+        g = (
+            ret_df["gross_ret"].dropna()
+            if "gross_ret" in ret_df.columns
+            else p
+        )
+        g_ann = (
+            (1.0 + g.mean()) ** 252 - 1.0
+            if (len(g) >= 5 and g.mean() > -1)
+            else float("nan")
+        )
         # alpha/beta vs 基准（statsmodels OLS）
         alpha_beta = 0.0
         beta = 0.0
@@ -230,7 +272,8 @@ class WalkForwardBacktester:
             pass
         dsr = deflated_sharpe(p)
         return {
-            "ann_return": float(ann),
+            "ann_return": float(ann),          # 净收益（头条指标）
+            "ann_return_gross": float(g_ann),  # 毛收益（未扣成本）
             "sharpe": float(sharpe),
             "bench_sharpe": float(bsharpe),
             "max_drawdown": mdd,

@@ -70,6 +70,18 @@ class SentimentTimingBacktester:
         # 行情宽表（后复权）+ 次日收益（point-in-time）
         price = bars_df.pivot_table(index="date", columns="code", values="adj_back_close")
         fwd = price.shift(-1) / price - 1.0
+        # 涨跌停流动性约束所需（P1-3）：交易日 t 的 close / pre_close
+        # 缺列则降级为不做涨跌停拦截（tradable_buy 返回 True）
+        close_px = (
+            bars_df.pivot_table(index="date", columns="code", values="close")
+            if "close" in bars_df.columns
+            else pd.DataFrame()
+        )
+        pre_close_px = (
+            bars_df.pivot_table(index="date", columns="code", values="pre_close")
+            if "pre_close" in bars_df.columns
+            else pd.DataFrame()
+        )
 
         # 限定可投资域
         if universe_df is not None and not universe_df.empty:
@@ -77,6 +89,8 @@ class SentimentTimingBacktester:
             keep = [c for c in price.columns if c in inv]
             price = price[keep]
             fwd = fwd[keep]
+            close_px = close_px[keep]
+            pre_close_px = pre_close_px[keep]
 
         # 因子宽表
         fwide = factor_long.pivot_table(
@@ -93,7 +107,7 @@ class SentimentTimingBacktester:
             self.wf.train_window = max(20, n // 3)
             self.wf.test_window = n - self.wf.train_window
 
-        rows: list = []  # (date, timing_ret, bench_ret, base_ret)
+        rows: list = []  # (date, timing_ret, bench_ret, base_ret, timing_gross, base_gross)
         prev_w: Optional[pd.Series] = None  # 择时组合权重（eq*expo）
         prev_b: Optional[pd.Series] = None  # baseline 组合权重（eq）
         start = 0
@@ -115,30 +129,44 @@ class SentimentTimingBacktester:
                 # 选 alpha 最高的 top_frac 等权多头
                 k = max(1, int(self.wf.top_frac * alpha.notna().sum()))
                 longs = alpha.dropna().sort_values(ascending=False).head(k).index
+                # P1-3 涨跌停约束：剔除当日涨停不可买入之名
+                longs = [
+                    c
+                    for c in longs
+                    if self.cost.tradable_buy(
+                        close_px[c].get(t) if c in close_px.columns else None,
+                        pre_close_px[c].get(t) if c in pre_close_px.columns else None,
+                    )
+                ]
+                if not longs:
+                    prev_w, prev_b = None, None
+                    continue
                 eq = pd.Series(0.0, index=alpha.index)
-                eq[longs] = 1.0 / k
+                eq[longs] = 1.0 / len(longs)
                 # 当日收益向量（t 持仓赚 t->t+1）
                 r = fwd.loc[t]
-                base_ret = float((eq * r).sum())  # 因子满仓组合
+                base_gross = float((eq * r).sum())  # 因子满仓组合（毛）
                 expo = exposure.get(t, self.default_exposure)
-                timing_ret = expo * base_ret  # 叠加权益暴露
+                timing_gross = expo * base_gross  # 叠加权益暴露（毛）
                 bench_ret = float(r.mean())  # 等权基准
 
                 # 成本（换手）：权重向量 = eq*expo（择时）/ eq（baseline）
                 w_t = eq * expo
                 cost_t = self._turnover_cost(w_t, prev_w)
                 cost_b = self._turnover_cost(eq, prev_b)
-                timing_ret -= cost_t
-                base_ret -= cost_b
+                timing_ret = timing_gross - cost_t
+                base_ret = base_gross - cost_b
 
-                rows.append((t, timing_ret, bench_ret, base_ret))
+                rows.append((t, timing_ret, bench_ret, base_ret, timing_gross, base_gross))
                 prev_w = w_t
                 prev_b = eq
             start += self.wf.step
 
         if not rows:
             return pd.DataFrame(), {}, pd.DataFrame()
-        ret_df = pd.DataFrame(rows, columns=["date", "port_ret", "bench_ret", "base_ret"])
+        ret_df = pd.DataFrame(
+            rows, columns=["date", "port_ret", "bench_ret", "base_ret", "port_gross", "base_gross"]
+        )
         metrics = self._metrics(ret_df)
         report_rows = self._report(ret_df, metrics)
         logger.info(
@@ -188,6 +216,19 @@ class SentimentTimingBacktester:
         out: Dict[str, float] = {}
         out.update(self._block(timing, bench, "timing_"))
         out.update(self._block(base, bench, "baseline_"))
+        # 毛收益年化（P1-3：与净收益对照）
+        timing_g = ret_df["port_gross"].dropna() if "port_gross" in ret_df.columns else timing
+        base_g = ret_df["base_gross"].dropna() if "base_gross" in ret_df.columns else base
+        out["timing_ann_return_gross"] = (
+            float((1.0 + timing_g.mean()) ** 252 - 1.0)
+            if (len(timing_g) >= 5 and timing_g.mean() > -1)
+            else float("nan")
+        )
+        out["baseline_ann_return_gross"] = (
+            float((1.0 + base_g.mean()) ** 252 - 1.0)
+            if (len(base_g) >= 5 and base_g.mean() > -1)
+            else float("nan")
+        )
         # 择时相对因子满仓的增量
         out["excess_ann_return"] = out["timing_ann_return"] - out["baseline_ann_return"]
         out["excess_max_drawdown"] = out["timing_max_drawdown"] - out["baseline_max_drawdown"]

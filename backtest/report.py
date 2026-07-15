@@ -33,7 +33,12 @@ def summarize_metrics(metrics: Dict[str, float]) -> str:
         return "_（样本不足，未生成回测指标）_"
     lines = ["### 回测绩效（walk-forward，含 A 股成本模型）", ""]
     label = {
-        "ann_return": "年化收益",
+        "ann_return": "年化收益(净·头条)",
+        "ann_return_gross": "年化收益(毛·未扣成本)",
+        "timing_ann_return": "择时年化收益(净)",
+        "timing_ann_return_gross": "择时年化收益(毛)",
+        "baseline_ann_return": "因子满仓年化(净)",
+        "baseline_ann_return_gross": "因子满仓年化(毛)",
         "sharpe": "Sharpe",
         "bench_sharpe": "基准 Sharpe",
         "max_drawdown": "最大回撤",
