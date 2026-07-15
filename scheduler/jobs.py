@@ -52,6 +52,7 @@ def build_data_router(settings: dict) -> DataSourceRouter:
         cache_raw=cfg.get("cache_raw", True),
         cache_dir=os.path.join(ROOT, cfg.get("raw_cache", "./data/raw_cache")),
         source_timeout=cfg.get("source_timeout", 20.0),
+        divergence_log=os.path.join(ROOT, cfg.get("divergence_log", "./data/divergence_log.jsonl")),
     )
 
 

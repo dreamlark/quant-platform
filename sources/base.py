@@ -77,12 +77,15 @@ class DataSourceRouter:
         cache_raw: bool = True,
         cache_dir: str = "./data/raw_cache",
         source_timeout: float = 20.0,
+        divergence_log: str = "./data/divergence_log.jsonl",
     ) -> None:
         self.sources = sorted(sources, key=lambda s: s.priority)
         self.diff_threshold = diff_threshold
         self.cache_raw = cache_raw
         self.cache_dir = cache_dir
         self.source_timeout = source_timeout
+        self.divergence_log = divergence_log
+        self._div_lock = threading.Lock()
         if self.cache_raw:
             os.makedirs(self.cache_dir, exist_ok=True)
 
@@ -167,13 +170,56 @@ class DataSourceRouter:
                 if ca <= 0 or cb <= 0:
                     continue
                 if abs(ca - cb) / ca > self.diff_threshold:
+                    rec = self._record_divergence(
+                        code=str(r.get("code", "")),
+                        date=str(r.get("date", "")),
+                        sa=sa,
+                        sb=sb,
+                        ca=ca,
+                        cb=cb,
+                    )
                     logger.warning(
                         f"多源差异超阈值 {self.diff_threshold}："
-                        f"{r['code']} {r['date']} {sa}={ca} vs {sb}={cb}"
+                        f"{r['code']} {r['date']} {sa}={ca} vs {sb}={cb} "
+                        f"(记录于 {rec})"
                     )
                     r["source"] = f"{r.get('source', sa)}_suspect"
         except Exception as exc:  # noqa: BLE001
             logger.debug(f"交叉校验跳过：{exc}")
+
+    def _record_divergence(
+        self,
+        code: str,
+        date: str,
+        sa: str,
+        sb: str,
+        ca: float,
+        cb: float,
+    ) -> str:
+        """把一次超阈值多源差异写成结构化 JSONL 记录，供监控/告警消费。
+
+        返回写入的文件路径；写失败仅记 debug 不影响主流程。
+        """
+        record = {
+            "ts": dt.datetime.now().isoformat(timespec="seconds"),
+            "code": code,
+            "date": date,
+            "source_a": sa,
+            "source_b": sb,
+            "price_a": ca,
+            "price_b": cb,
+            "diff": abs(ca - cb) / ca if ca else 0.0,
+            "threshold": self.diff_threshold,
+        }
+        path = self.divergence_log
+        with self._div_lock:
+            try:
+                os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+                with open(path, "a", encoding="utf-8") as f:
+                    f.write(json.dumps(record, ensure_ascii=False) + "\n")
+            except Exception as exc:  # noqa: BLE001
+                logger.debug(f"分歧记录写盘失败：{exc}")
+        return path
 
     def _cache(self, code: str, src_name: str, rows: List[Dict[str, Any]]) -> None:
         try:

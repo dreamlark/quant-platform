@@ -20,6 +20,8 @@ data_sources:
   priority: ["mootdx", "akshare", "baostock"]
   diff_threshold: 0.03          # 多源同标的价差超阈值 -> 告警并标记 source 可疑
   cache_raw: true
+  source_timeout: 20.0          # 单源调用超时护栏（秒）；超时视为该源不可用并降级
+  divergence_log: "./data/divergence_log.jsonl"  # 超阈值分歧结构化记录（JSONL，供监控/告警）
   # mootdx/Tencent 适配器参数（通达信 TCP 7709 永不封 IP）
   mootdx:
     market: "std"

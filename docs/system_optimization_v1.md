@@ -94,7 +94,9 @@ Phase 4  运维      P3-1 调度 → P3-3 数据质量 → P3-2 MLOps
 > 原 PRD 的"新建 Eastmoney/Tencent 日线适配器"方案作废——改为**直接采用既有的多源路由**
 > （`DataSourceRouter` + `mootdx`/`akshare`/`baostock` 三适配器），该方案源自早期 a-stock-DB
 > 的 scale 设计，因沙箱网络受限曾临时降级为单源，现已在生产调度路径中完整跑通（见下方"已实现"）。
-> 剩余工作仅为：真机验证 + 配置化 + 文档化 + 偏差日志结构化。
+> **本会话收尾**：配置化（`source_timeout` / `divergence_log` 已写入 `settings.yaml` 并由 `build_data_router` 透传）、
+> 偏差日志结构化（`divergence_log` JSONL 结构化记录 + 单测）、文档化（README §4.6 / §8.3 已补）均已完成。
+> 仅**真机验证**为验收动作（沙箱无外网/TDX 不可达，列为验收项而非开发项）。
 
 **问题陈述**
 `step_ingest` 早期在沙箱里因网络受限临时降级为 akshare Sina 单源。单源既是单点故障，也是限流元凶
@@ -107,8 +109,8 @@ Phase 4  运维      P3-1 调度 → P3-3 数据质量 → P3-2 MLOps
 - 跨源 `close` 差异超阈值告警，并结构化记录供监控（衔接 P2-3）。
 
 **范围**
-- **含**：真机验证三源可达性；把 `source_timeout` / `diff_threshold` 配到 `config/settings.yaml`；
-  跨源偏差写 `divergence_log`；README/架构文档更新"已采用多源冗余"。
+- **含**：真机验证三源可达性（验收动作）；把 `source_timeout` / `diff_threshold` / `divergence_log` 配到 `config/settings.yaml`（已完成）；
+  跨源偏差写 `divergence_log` 并结构化（已完成，含单测）；README/架构文档更新"已采用多源冗余"（已完成）。
 - **不含**：新建 Eastmoney/Tencent 适配器（已确认不必要）；存储层改动。
 
 **方案与架构（采用既有实现）**
@@ -136,9 +138,16 @@ Phase 4  运维      P3-1 调度 → P3-3 数据质量 → P3-2 MLOps
 - 超时护栏是真实机上的关键保险：baostock 在部分网络会 `login` 挂死，无护栏则整条 ingest 冻结。
 
 **验收标准**
-- 真机（有外网/TDX 可达）跑一次 `run_daily`：三源中至少两源成功，日志可见回退与 `source` 标注。
-- `config/settings.yaml` 含 `data_sources.timeout` / `diff_threshold`；改值后行为随之变化。
-- 故意制造跨源差异 > 阈值 → `divergence_log` 出现记录（衔接 P2-3 告警）。
+- 真机（有外网/TDX 可达）跑一次 `run_daily`：三源中至少两源成功，日志可见回退与 `source` 标注（验收动作）。
+- `config/settings.yaml` 含 `data_sources.source_timeout` / `diff_threshold` / `divergence_log`；改值后行为随之变化（✅ 已实现）。
+- 故意制造跨源差异 > 阈值 → `divergence_log` 出现结构化 JSONL 记录（✅ 已实现 + `tests/test_divergence_log.py` 覆盖）。
+
+**本会话落地补充（2026-07-15）**
+- `sources/base.py::DataSourceRouter` 新增 `divergence_log` 参数与 `_record_divergence()`：超阈值分歧写入
+  JSONL（字段 `ts/code/date/source_a/source_b/price_a/price_b/diff/threshold`），带锁、写失败不阻断主流程。
+- `scheduler/jobs.py::build_data_router` 透传 `source_timeout` / `divergence_log`（路径基于仓库 ROOT）。
+- `config/settings.yaml` 显式补 `source_timeout: 20.0` 与 `divergence_log` 路径。
+- `tests/test_divergence_log.py`：超阈值写记录（含字段断言）+ 未超阈值不写，2 例全过；全量测试 53 通过。
 
 **风险与缓解**
 - 沙箱无法验证 mootdx/baostock 真机可达性。缓解：**本项为"采用既有方案"，真机验证是验收动作而非开发**；

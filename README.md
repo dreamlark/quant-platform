@@ -218,6 +218,7 @@ _run_real.py ──▶ scheduler.orchestrator
 - **幂等重跑**：`ingest` 按 `max(date)` 续跑；预测检查点 `_kronos_eval_ckpt_*.json` 按签名跳过已算股票。
 - **静默降级**：数据源/重模型缺失时降级到基线，不抛顶层异常（各 step 内部已隔离；但编排层无顶层 try，单步未捕获异常会中止整轮）。
 - **信号池兜底**：预测源 `dir_acc ≤ 0.5` 自动降权为 0，避免噪声污染融合。
+- **多源冗余（L1）**：`DataSourceRouter` 按 `data_sources.priority` 依次尝试（默认 `mootdx→akshare→baostock`），单源挂死经 `source_timeout`（默认 20s，daemon 线程 + join 超时）护栏降级到下一冗余源，不阻塞整条 ingest；多源同标的收盘差异超 `diff_threshold`（默认 0.03）时既告警又写入结构化 `divergence_log`（JSONL，字段含 code/date/source_a/source_b/price_a/price_b/diff/threshold），供监控/告警消费，并把该行 `source` 标为 `*_suspect`。
 
 ---
 
@@ -634,7 +635,9 @@ pnpm build && pnpm preview
 | 键 | 默认 | 作用 |
 |----|------|------|
 | `data_sources.priority` | `[mootdx, akshare, baostock]` | 多源优先级；本环境实际仅 akshare 可用 |
-| `data_sources.diff_threshold` | `0.03` | 多源价格差异阈值，超阈值告警 |
+| `data_sources.diff_threshold` | `0.03` | 多源价格差异阈值，超阈值告警并写 divergence_log |
+| `data_sources.source_timeout` | `20.0` | 单源调用超时护栏（秒）；超时视为该源不可用并降级 |
+| `data_sources.divergence_log` | `./data/divergence_log.jsonl` | 超阈值分歧结构化记录路径（JSONL） |
 | `data_sources.mootdx.bestip` | `true` | mootdx 自动选最优 IP（防封） |
 | `data_sources.mootdx.timeout` | `3.0` | 单源超时（秒） |
 | `data_sources.tencent.enable` | `true` | 腾讯源开关 |
