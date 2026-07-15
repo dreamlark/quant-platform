@@ -25,26 +25,8 @@ from storage.repository import Repository
 router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
 
 
-def _sanitize_val(v):
-    """把 inf/nan 转为 None（pydantic v2 json 序列化拒绝非有限浮点）。"""
-    if isinstance(v, (float, np.floating)):
-        fv = float(v)
-        if math.isnan(fv) or math.isinf(fv):
-            return None
-    if isinstance(v, (np.integer,)):
-        return int(v)
-    return v
-
-
-def _sanitize_df(df: pd.DataFrame) -> pd.DataFrame:
-    """将数值列的 inf/nan 清洗为 None，避免响应序列化 500。"""
-    if df is None or df.empty:
-        return df
-    out = df.copy()
-    for c in out.columns:
-        if pd.api.types.is_numeric_dtype(out[c]):
-            out[c] = out[c].apply(_sanitize_val)
-    return out
+from api.serializers import sanitize_df as _sanitize_df
+from api.serializers import sanitize_val as _sanitize_val
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 

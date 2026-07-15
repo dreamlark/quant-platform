@@ -15,12 +15,19 @@ if ROOT not in sys.path:
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from api.middleware import (
+    SanitizedJSONResponse,
+    register_exception_handlers,
+)
 from api.routers import admin, dashboard, factors, monitor, sectors, stocks, watchlist
 
 app = FastAPI(
     title="A 股日频量化分析平台 API",
     description="analysis-first（只分析不交易）· 因子/技术/情绪/预测四源融合信号",
     version="0.1.0",
+    # P2-1 边界治理核心机制：所有端点（含 response_model 路径）在序列化前统一消毒
+    # inf/nan/numpy 特殊值 → 合法 JSON，杜绝 500。
+    default_response_class=SanitizedJSONResponse,
 )
 
 # 零认证、本地部署，允许前端跨域
@@ -31,6 +38,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+# P2-1 边界治理：默认响应类（SanitizedJSONResponse）已在序列化边界统一消毒 inf/nan；
+# 统一异常处理：未捕获异常 → 干净 JSON，避免 500 裸奔。
+register_exception_handlers(app)
 
 app.include_router(dashboard.router)
 app.include_router(factors.router)

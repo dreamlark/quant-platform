@@ -219,6 +219,7 @@ _run_real.py ──▶ scheduler.orchestrator
 - **静默降级**：数据源/重模型缺失时降级到基线，不抛顶层异常（各 step 内部已隔离；但编排层无顶层 try，单步未捕获异常会中止整轮）。
 - **信号池兜底**：预测源 `dir_acc ≤ 0.5` 自动降权为 0，避免噪声污染融合。
 - **多源冗余（L1）**：`DataSourceRouter` 按 `data_sources.priority` 依次尝试（默认 `mootdx→akshare→baostock`），单源挂死经 `source_timeout`（默认 20s，daemon 线程 + join 超时）护栏降级到下一冗余源，不阻塞整条 ingest；多源同标的收盘差异超 `diff_threshold`（默认 0.03）时既告警又写入结构化 `divergence_log`（JSONL，字段含 code/date/source_a/source_b/price_a/price_b/diff/threshold），供监控/告警消费，并把该行 `source` 标为 `*_suspect`。
+- **API 序列化边界（P2-1）**：`api` 层禁止直连 DuckDB（统一走 `storage/repository.py`，CI 静态护栏 `tools/check_api_boundary.py` 扫描 `api/**` 的 `duckdb.connect`）。所有端点以 `SanitizedJSONResponse`（默认响应类，`api/middleware.py`）在 Starlette 序列化前统一把 inf/nan→None、numpy→原生类型，杜绝非有限浮点导致的 500；`register_exception_handlers` 把未捕获异常转为干净 JSON（500 + `detail`/`error`），避免裸栈。
 
 ---
 
