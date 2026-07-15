@@ -88,6 +88,21 @@ class SectorAnalyzer:
         else:
             day["prev_amt"] = np.nan
 
+        if day.empty:
+            # 当日无行情（非交易日 / 行情尚未发布 / ingest 缺口）→ 返回空快照，
+            # 避免 pd.DataFrame([]).sort_values("rs") 抛 KeyError 拖垮整条流水线
+            return pd.DataFrame(
+                columns=[
+                    "date",
+                    "sector_code",
+                    "sector_name",
+                    "change_pct",
+                    "rs",
+                    "net_inflow",
+                    "rotation_signal",
+                ]
+            )
+
         # 板块映射：优先真实行业分类（industry_map），否则用 sectors.yaml，未命中 -> OTHER
         if industry_map:
             day["sector_code"] = day["code"].map(lambda c: industry_map.get(c, "OTHER"))

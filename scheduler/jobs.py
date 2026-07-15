@@ -19,7 +19,7 @@ if ROOT not in sys.path:
 
 from common.config import build_repository, load_settings  # noqa: E402
 from scheduler.orchestrator import Orchestrator  # noqa: E402
-from sources.akshare_adapter import AkShareAdapter  # noqa: E402
+from sources.akshare_adapter import AkshareDailyAdapter  # noqa: E402
 from sources.base import DataSourceRouter  # noqa: E402
 from sources.baostock_adapter import BaostockAdapter  # noqa: E402
 from sources.mootdx_adapter import MootdxAdapter  # noqa: E402
@@ -43,7 +43,7 @@ def build_data_router(settings: dict) -> DataSourceRouter:
         if name == "mootdx":
             sources.append(MootdxAdapter(market=m.get("market", "std"), bestip=m.get("bestip", True)))
         elif name == "akshare":
-            sources.append(AkShareAdapter())
+            sources.append(AkshareDailyAdapter())
         elif name == "baostock":
             sources.append(BaostockAdapter())
     return DataSourceRouter(
@@ -51,6 +51,7 @@ def build_data_router(settings: dict) -> DataSourceRouter:
         diff_threshold=cfg.get("diff_threshold", 0.03),
         cache_raw=cfg.get("cache_raw", True),
         cache_dir=os.path.join(ROOT, cfg.get("raw_cache", "./data/raw_cache")),
+        source_timeout=cfg.get("source_timeout", 20.0),
     )
 
 

@@ -14,6 +14,7 @@ import datetime as dt
 import hashlib
 import json
 import os
+import threading
 from typing import Any, Dict, List, Optional
 
 from loguru import logger
@@ -75,37 +76,45 @@ class DataSourceRouter:
         diff_threshold: float = 0.03,
         cache_raw: bool = True,
         cache_dir: str = "./data/raw_cache",
+        source_timeout: float = 20.0,
     ) -> None:
         self.sources = sorted(sources, key=lambda s: s.priority)
         self.diff_threshold = diff_threshold
         self.cache_raw = cache_raw
         self.cache_dir = cache_dir
+        self.source_timeout = source_timeout
         if self.cache_raw:
             os.makedirs(self.cache_dir, exist_ok=True)
 
     def fetch(
         self, code: str, start: dt.date, end: dt.date
     ) -> List[Dict[str, Any]]:
-        """按优先级拉取；返回首个成功的源结果，并做多源交叉校验。"""
+        """按优先级拉取；返回首个成功的源结果，并做多源交叉校验。
+
+        每个源的 ``health_check`` / ``fetch_daily_bars`` 均经 ``_call`` 套上
+        ``source_timeout`` 超时护栏：单源挂死（如 baostock.login 在网络受限环境
+        阻塞）不会拖垮整条 ingest，超时被当作该源不可用并自动降级到下一冗余源。
+        """
         last_err: Optional[Exception] = None
         primary: Optional[List[Dict[str, Any]]] = None
         primary_src = ""
         for src in self.sources:
-            try:
-                if not src.health_check():
-                    logger.warning(f"源 {src.name} 健康检查失败，跳过")
-                    continue
-                rows = src.fetch_daily_bars(code, start, end)
-                if rows:
-                    if self.cache_raw:
-                        self._cache(code, src.name, rows)
-                    if primary is None:
-                        primary, primary_src = rows, src.name
-                    else:
-                        self._cross_check(primary, rows, primary_src, src.name)
-            except Exception as exc:  # noqa: BLE001 多源降级
-                logger.warning(f"源 {src.name} 拉取 {code} 失败：{exc}")
-                last_err = exc
+            healthy = self._call(src.health_check, f"{src.name}.health")
+            if healthy is not True:
+                continue
+            rows = self._call(
+                lambda s=src: s.fetch_daily_bars(code, start, end),
+                f"{src.name}.fetch",
+            )
+            if rows is None:
+                continue
+            if rows:
+                if self.cache_raw:
+                    self._cache(code, src.name, rows)
+                if primary is None:
+                    primary, primary_src = rows, src.name
+                else:
+                    self._cross_check(primary, rows, primary_src, src.name)
         if primary is None:
             raise RuntimeError(
                 f"所有数据源均不可用（{code}）：{last_err}"
@@ -113,6 +122,32 @@ class DataSourceRouter:
         for r in primary:
             r["source"] = primary_src
         return primary
+
+    def _call(self, fn, label: str):
+        """带超时的源调用（daemon 线程 + join 超时），避免单源挂死阻塞整条流水线。
+
+        超时或异常均返回 ``None``，由 ``fetch`` 视为该源不可用并降级；
+        daemon 线程保证挂死源不阻塞进程退出。
+        """
+        box: List[Any] = [None]
+        err: List[Any] = [None]
+
+        def _run() -> None:
+            try:
+                box[0] = fn()
+            except Exception as exc:  # noqa: BLE001
+                err[0] = exc
+
+        t = threading.Thread(target=_run, daemon=True)
+        t.start()
+        t.join(self.source_timeout)
+        if t.is_alive():
+            logger.warning(f"源调用超时（>{self.source_timeout}s）：{label}")
+            return None
+        if err[0] is not None:
+            logger.warning(f"源调用异常：{label}：{err[0]}")
+            return None
+        return box[0]
 
     def _cross_check(
         self,
