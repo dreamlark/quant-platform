@@ -34,7 +34,7 @@ dependencies = [
     # 工程化
     "loguru>=0.7",
     "python-dotenv>=1.0",
-    "httpx>=0.27",
+    "httpx>=0.24,<0.26",  # 上限 <0.26 以兼容 mootdx（mootdx 内部要求 httpx<0.26）
 ]
 
 [project.optional-dependencies]
