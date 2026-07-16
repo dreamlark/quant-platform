@@ -11,7 +11,7 @@ import json
 import os
 import threading
 
-ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 RUN_HISTORY_PATH = os.path.join(ROOT, "data", "run_history.jsonl")
 # P3-1：批处理（orchestrator.run_daily）逐步状态，与 run_history 分开存储，便于按 run_id 取逐步明细
 STEP_HISTORY_PATH = os.path.join(ROOT, "data", "run_steps.jsonl")
