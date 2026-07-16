@@ -77,7 +77,6 @@ class RiskNeutralizer:
                 except Exception:  # noqa: BLE001
                     g[fname] = y  # 退化：保留原值
             out_parts.append(g)
-            continue
 
         if not out_parts:
             return factor_long

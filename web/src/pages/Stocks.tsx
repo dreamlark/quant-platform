@@ -23,7 +23,7 @@ export default function Stocks() {
 
   const onSearch = async (q: string) => {
     if (!q) return;
-    const r = await api.get(`/stocks/search?q=${q}`);
+    const r = await api.get('/stocks/search', { params: { q } });
     setOptions(r.data.map((x: any) => ({ value: x.code, label: `${x.code} ${x.name}` })));
   };
 

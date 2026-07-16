@@ -23,7 +23,8 @@ ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
-from common.config import build_repository, load_settings  # noqa: E402
+from common.config import load_settings  # noqa: E402
+from api.database import get_repository  # noqa: E402
 from api.run_store import append_run  # noqa: E402
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
@@ -65,7 +66,7 @@ class UpdateManager:
         self._thread: threading.Thread | None = None
         self._run_meta: dict = {"run_id": None, "started_at": None, "trigger": "manual"}
 
-    # -------- 构造编排器（复用 _run_real 的 HS300 域 + akshare 逻辑）--------
+    # -------- 构造编排器（复用 API 单例 Repository，避免重复打开 DuckDB 连接）--------
     def _build_orch(self):
         from scheduler.orchestrator import Orchestrator
         from sources.akshare_adapter import AkshareDailyAdapter
@@ -73,7 +74,8 @@ class UpdateManager:
         from sources.market_meta import build_market_meta
 
         settings = load_settings()
-        repo, settings = build_repository(settings)
+        # 复用 api.database 的单例 Repository，不再重复 build_repository 打开同一 DuckDB 文件
+        repo = get_repository()
 
         # 沪深300 成分（akshare，失败兜底 universe 表）
         codes, names = [], []

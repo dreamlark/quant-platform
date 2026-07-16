@@ -7,6 +7,13 @@ from __future__ import annotations
 import os
 import sys
 
+# 加载 .env 环境变量（python-dotenv 声明为必装依赖，但需显式调用方能生效）
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+
 # 保证仓库根在 sys.path（绝对导入 storage/api 等）
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
@@ -30,11 +37,10 @@ app = FastAPI(
     default_response_class=SanitizedJSONResponse,
 )
 
-# 零认证、本地部署，允许前端跨域
+# 零认证、本地部署，允许前端跨域（无凭据，不设 allow_credentials）
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )

@@ -77,10 +77,10 @@ export default function Watchlist() {
           <Form.Item name="name" label="名称">
             <Input placeholder="如 贵州茅台" />
           </Form.Item>
-          <Form.Item name="cost_price" label="成本价" rules={[{ required: true }]}>
-            <InputNumber min={0} style={{ width: '100%' }} />
+          <Form.Item name="cost_price" label="成本价" rules={[{ required: true, message: '请输入成本价' }]}>
+            <InputNumber min={0.01} style={{ width: '100%' }} />
           </Form.Item>
-          <Form.Item name="shares" label="持仓数量" rules={[{ required: true }]}>
+          <Form.Item name="shares" label="持仓数量" rules={[{ required: true, message: '请输入持仓数量' }]}>
             <InputNumber min={0} style={{ width: '100%' }} />
           </Form.Item>
         </Form>

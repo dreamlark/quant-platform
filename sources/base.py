@@ -110,6 +110,7 @@ class DataSourceRouter:
                 f"{src.name}.fetch",
             )
             if rows is None:
+                last_err = RuntimeError(f"{src.name} 返回空或超时")
                 continue
             if rows:
                 if self.cache_raw:
