@@ -51,7 +51,9 @@ def _fallback_score(g: pd.DataFrame) -> np.ndarray:
     s2 = clip((rsi - 50.0) / 30.0)      # RSI 超买超卖
     s3 = clip(breakout / 0.10)          # 60 日突破
     score = 0.5 * s1 + 0.3 * s2 + 0.2 * s3
-    return score.clip(-1.0, 1.0).to_numpy(dtype=float)
+    # score 已是 numpy.ndarray（s1/s2/s3 经 common.stats.clip 返回 ndarray），
+    # 直接 np.clip 即可，勿再调 .to_numpy()
+    return np.clip(score, -1.0, 1.0)
 
 
 class CzscSignals:
