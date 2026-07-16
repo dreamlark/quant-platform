@@ -215,8 +215,16 @@ export default function Monitor() {
   );
 
   // —— 运行记录卡 ——
+  // 运行记录同时存在两套 schema：手动运行(RunRecord: started_at/duration_sec/...)
+  // 与批处理运行(BatchRunRecord: start_ts/duration_s/...)。列表需兼容两种（P3-audit 修复）。
   const runColumns = [
-    { title: '开始', dataIndex: 'started_at', render: (v: string) => v.replace('T', ' ') },
+    {
+      title: '开始', dataIndex: 'started_at',
+      render: (_: any, r: RunRecord) => {
+        const t = (r as any).started_at || (r as any).start_ts;
+        return t ? t.replace('T', ' ') : '-';
+      },
+    },
     {
       title: '触发', dataIndex: 'trigger',
       render: (v: string) => (v === 'auto' ? <Tag>自动</Tag> : <Tag color="blue">手动</Tag>),
@@ -228,10 +236,22 @@ export default function Monitor() {
         return <Tag color={m.color}>{m.label}</Tag>;
       },
     },
-    { title: '目标日', dataIndex: 'target_date', render: (v: string | null) => v || '-' },
-    { title: '到达步骤', dataIndex: 'reached_step' },
-    { title: '进度', render: (_: any, r: RunRecord) => `${r.progress}/${r.total}` },
-    { title: '耗时', dataIndex: 'duration_sec', render: (v: number) => `${v}s` },
+    {
+      title: '目标日', dataIndex: 'target_date',
+      render: (_: any, r: RunRecord) => (r as any).target_date || (r as any).date || '-',
+    },
+    {
+      title: '到达步骤', dataIndex: 'reached_step',
+      render: (_: any, r: RunRecord) => (r as any).reached_step ?? '-',
+    },
+    {
+      title: '进度',
+      render: (_: any, r: RunRecord) => `${(r as any).progress ?? '-'}/${(r as any).total ?? '-'}`,
+    },
+    {
+      title: '耗时', dataIndex: 'duration_sec',
+      render: (_: any, r: RunRecord) => `${(r as any).duration_sec ?? (r as any).duration_s ?? '-'}s`,
+    },
     {
       title: '错误', dataIndex: 'error',
       render: (v: string | null) =>

@@ -290,7 +290,8 @@ class Repository:
         return df["code"].tolist() if not df.empty else []
 
     def delete_watch(self, code: str) -> int:
-        self.analytics.execute("DELETE FROM watchlist WHERE code = ?", [code])
+        # 走包装后的 execute 必须消费结果集以释放连接锁（P3-audit 并发修复）
+        self.analytics.execute("DELETE FROM watchlist WHERE code = ?", [code]).fetchall()
         return 1
 
     # ===== 回测 backtest_report =====

@@ -58,6 +58,7 @@ export default function App() {
               <Route path="/factors" element={<Factors />} />
               <Route path="/sectors" element={<Sectors />} />
               <Route path="/stocks" element={<Stocks />} />
+            <Route path="/stocks/:code" element={<Stocks />} />
             <Route path="/watchlist" element={<Watchlist />} />
             <Route path="/monitor" element={<Monitor />} />
           </Routes>

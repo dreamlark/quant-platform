@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { useParams } from 'react-router-dom';
 import { Card, Input, Table, Tag, Spin, Empty, Row, Col, Statistic, AutoComplete, Typography } from 'antd';
 import { api, SignalDetail } from '../api/client';
 import { EChart, AXIS_STYLE, baseGrid } from '../components/charts';
@@ -11,8 +12,11 @@ function dirText(d: number) {
 }
 
 export default function Stocks() {
+  // 支持深链 /stocks/:code（P3-audit 修复：原仅能经搜索选择，直接访问个股页为空）
+  const { code: paramCode } = useParams();
   const [options, setOptions] = useState<{ value: string; label: string }[]>([]);
-  const [code, setCode] = useState<string>('');
+  const [code, setCode] = useState<string>(paramCode || '');
+  useEffect(() => { setCode(paramCode || ''); }, [paramCode]);
   const [detail, setDetail] = useState<SignalDetail | null>(null);
   const [bars, setBars] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
