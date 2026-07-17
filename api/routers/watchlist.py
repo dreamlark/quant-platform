@@ -1,6 +1,7 @@
 """自选股路由（记账持仓盈亏 + 逐只简评，F-09 / T11）。"""
 from __future__ import annotations
 
+import pandas as pd
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -23,12 +24,30 @@ def list_watchlist():
     bars = repo.load_bars(codes=codes)
     latest = bars.sort_values("date").groupby("code").tail(1) if not bars.empty else bars
     sig = repo.load_signals(resolve_date(repo, None, "signal"))
+
+    # 循环外建 dict 索引，避免对每只自选股重复扫描 latest/sig（O(N²) → O(N)）
+    latest_map = (
+        {str(r["code"]): float(r["close"]) for _, r in latest.iterrows()}
+        if not latest.empty
+        else {}
+    )
+    sig_map = (
+        {
+            str(r["code"]): {
+                "direction": int(r["direction"]) if pd.notna(r["direction"]) else None,
+                "confidence": float(r["confidence"]) if pd.notna(r["confidence"]) else None,
+            }
+            for _, r in sig.iterrows()
+        }
+        if not sig.empty
+        else {}
+    )
+
     out = []
     for _, r in w.iterrows():
         code = r["code"]
-        cur = latest[latest["code"] == code]["close"]
-        price = float(cur.iloc[0]) if not cur.empty else None
-        srow = sig[sig["code"] == code]
+        price = latest_map.get(code)
+        s = sig_map.get(code)
         out.append(
             WatchOut(
                 code=code,
@@ -39,8 +58,8 @@ def list_watchlist():
                 pnl_pct=round((price - float(r["cost_price"])) / float(r["cost_price"]) * 100, 2)
                 if price
                 else None,
-                direction=int(srow.iloc[0]["direction"]) if not srow.empty else None,
-                confidence=float(srow.iloc[0]["confidence"]) if not srow.empty else None,
+                direction=s["direction"] if s else None,
+                confidence=s["confidence"] if s else None,
             )
         )
     return out

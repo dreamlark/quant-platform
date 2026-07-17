@@ -1,61 +1,26 @@
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   Card, Col, Row, Table, Typography, Tag, Spin, Statistic, Empty,
   Button, Switch, Space, Progress, Alert, Tooltip,
 } from 'antd';
 import {
-  api, DashboardSummary, Signal, Sector, WatchItem, MarketSentimentView,
+  DashboardSummary, Sector, MarketSentimentView,
   UpdateStatus, triggerUpdate, getUpdateStatus, startAuto, stopAuto,
+  apiGet, errMsg, isAxiosConflict,
 } from '../api/client';
-import { EChart, AXIS_STYLE, baseGrid } from '../components/charts';
+import { EChart, AXIS_STYLE, baseGrid, EChartsOption } from '../components/charts';
 import { COLORS } from '../theme';
+import {
+  STATUS_META, REGIME_COLOR, REGIME_STATE_COLOR, SIGNAL_COLOR, subBar,
+} from '../constants';
 
 const { Title, Paragraph, Text } = Typography;
-
-const REGIME_COLOR: Record<string, string> = {
-  恐惧: 'red',
-  中性: 'default',
-  贪婪: 'green',
-};
-const SIGNAL_COLOR: Record<string, string> = {
-  买入: 'green',
-  半仓: 'gold',
-  空仓: 'red',
-};
-const REGIME_STATE_COLOR: Record<string, string> = {
-  bull: 'green',
-  neutral: 'default',
-  bear: 'orange',
-  panic: 'red',
-};
-
-function subBar(label: string, v: number | null | undefined) {
-  if (v == null) return null;
-  return (
-    <div style={{ marginTop: 4 }}>
-      <Text type="secondary" style={{ fontSize: 12 }}>{label}：{v.toFixed(1)}</Text>
-      <Progress
-        percent={Math.round(v)}
-        size="small"
-        showInfo={false}
-        strokeColor={v >= 50 ? COLORS.up : COLORS.down}
-      />
-    </div>
-  );
-}
 
 function dirTag(d: number) {
   if (d === 1) return <Tag color="red">看多</Tag>;
   if (d === -1) return <Tag color="green">看空</Tag>;
   return <Tag>中性</Tag>;
 }
-
-const STATUS_META: Record<string, { color: string; label: string }> = {
-  idle: { color: 'default', label: '空闲' },
-  running: { color: 'processing', label: '更新中' },
-  success: { color: 'success', label: '成功' },
-  failed: { color: 'error', label: '失败' },
-};
 
 export default function Dashboard() {
   const [data, setData] = useState<DashboardSummary | null>(null);
@@ -64,14 +29,20 @@ export default function Dashboard() {
   const [triggering, setTriggering] = useState(false);
   const [autoBusy, setAutoBusy] = useState(false);
   const [hint, setHint] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [statusError, setStatusError] = useState<string | null>(null);
 
   const fetchStatus = () =>
     getUpdateStatus()
       .then((r) => setStatus(r.data))
-      .catch(() => {/* 状态接口异常不阻塞看板 */});
+      .catch((e) => setStatusError(errMsg(e)));
 
   useEffect(() => {
-    api.get('/dashboard/summary').then((r) => setData(r.data)).finally(() => setLoading(false));
+    setError(null);
+    apiGet<DashboardSummary>('/dashboard/summary')
+      .then(setData)
+      .catch((e) => setError(errMsg(e)))
+      .finally(() => setLoading(false));
     fetchStatus();
   }, []);
 
@@ -89,12 +60,12 @@ export default function Dashboard() {
       await triggerUpdate();
       setHint('已触发数据更新，进度见下方状态条');
       fetchStatus();
-    } catch (e: any) {
-      if (e?.response?.status === 409) {
+    } catch (e: unknown) {
+      if (isAxiosConflict(e)) {
         setHint('已有更新任务在运行中，请稍候');
         fetchStatus();
       } else {
-        setHint('触发更新失败：' + (e?.message || '未知错误'));
+        setHint('触发更新失败：' + errMsg(e));
       }
     } finally {
       setTriggering(false);
@@ -113,8 +84,8 @@ export default function Dashboard() {
         setHint('已关闭自动运行');
       }
       fetchStatus();
-    } catch (e: any) {
-      setHint('切换自动运行失败：' + (e?.message || '未知错误'));
+    } catch (e: unknown) {
+      setHint('切换自动运行失败：' + errMsg(e));
     } finally {
       setAutoBusy(false);
     }
@@ -145,7 +116,7 @@ export default function Dashboard() {
     { title: '信号', dataIndex: 'direction', render: (d?: number) => (d == null ? '-' : dirTag(d)) },
   ];
 
-  const sectorOption = {
+  const sectorOption: EChartsOption = {
     grid: baseGrid,
     tooltip: { trigger: 'axis' },
     xAxis: { type: 'category', data: data.sectors.map((s: Sector) => s.sector_name), ...AXIS_STYLE },
@@ -153,8 +124,8 @@ export default function Dashboard() {
     series: [
       {
         type: 'bar',
-        data: data.sectors.map((s: Sector) => +(s.change_pct * 100).toFixed(2)),
-        itemStyle: { color: (p: any) => (p.value >= 0 ? COLORS.up : COLORS.down) },
+        data: data.sectors.map((s: Sector) => +(s.change_pct == null ? 0 : (s.change_pct * 100).toFixed(2))),
+        itemStyle: { color: (p) => ((p.value as number) >= 0 ? COLORS.up : COLORS.down) },
       },
     ],
   };
@@ -214,6 +185,12 @@ export default function Dashboard() {
   return (
     <div className="page">
       <Title level={3}>每日简报 · {data.date}</Title>
+      {error && (
+        <Alert style={{ marginBottom: 16 }} type="error" showIcon message="看板数据加载失败" description={error} />
+      )}
+      {statusError && (
+        <Alert style={{ marginBottom: 16 }} type="warning" showIcon message="状态接口异常" description={statusError} />
+      )}
 
       {/* 运维控制卡片：立即更新 / 自动运行 / 状态进度 */}
       <Card className="metric-card" style={{ marginBottom: 16 }}>
@@ -248,7 +225,7 @@ export default function Dashboard() {
               <Progress
                 percent={pct}
                 steps={status.total}
-                size={status.status === 'running' ? 'small' : 'small'}
+                size="small"
                 status={status.status === 'failed' ? 'exception' : status.status === 'success' ? 'success' : 'active'}
               />
             )}

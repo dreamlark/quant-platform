@@ -18,6 +18,31 @@ export interface Signal {
   predict_contrib: number;
 }
 
+// 统一请求封装：返回 data；出错时抛出异常（不再静默吞掉），由调用方 .catch 处理
+export function apiGet<T>(url: string, config?: import('axios').AxiosRequestConfig): Promise<T> {
+  return api.get<T>(url, config).then((r) => r.data);
+}
+
+// 把未知错误收敛为可读中文文案
+export function errMsg(e: unknown): string {
+  if (axios.isAxiosError(e)) {
+    if (e.response) {
+      const data = e.response.data;
+      const detail = typeof data === 'string' ? data : JSON.stringify(data);
+      return `请求失败（${e.response.status}）：${detail}`.slice(0, 200);
+    }
+    if (e.request) return '网络异常：无法连接服务';
+    return e.message;
+  }
+  if (e instanceof Error) return e.message;
+  return '未知错误';
+}
+
+// 是否触发了「已有更新在运行」的冲突（HTTP 409）
+export function isAxiosConflict(e: unknown): boolean {
+  return axios.isAxiosError(e) && e.response?.status === 409;
+}
+
 export interface Sector {
   date: string;
   sector_code: string;
@@ -61,7 +86,7 @@ export interface SignalDetail {
   sentiment_contrib: number;
   predict_contrib: number;
   factor_detail: { factor_name: string; value: number }[];
-  predict_detail: any[];
+  predict_detail: Record<string, unknown>[];
 }
 
 export interface DashboardSummary {

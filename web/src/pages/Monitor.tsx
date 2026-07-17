@@ -1,63 +1,34 @@
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
-  Card, Row, Col, Table, Typography, Tag, Spin, Statistic, Empty, Progress, Tooltip,
+  Card, Row, Col, Table, Typography, Tag, Spin, Statistic, Empty, Progress, Tooltip, Alert,
 } from 'antd';
 import {
-  api, MonitorOverview, RunRecord, DataStatus, FactorHealthSummary, ModelStatus, Freshness,
-  MarketSentimentView,
-  getMonitorOverview, getMonitorHistory,
+  MonitorOverview, DataStatus, FactorHealthSummary, ModelStatus, Freshness,
+  MarketSentimentView, getMonitorOverview, getMonitorHistory, errMsg,
 } from '../api/client';
-import { COLORS } from '../theme';
+import {
+  STATUS_META, FACTOR_STATUS_COLOR, REGIME_COLOR, REGIME_STATE_COLOR, SIGNAL_COLOR,
+  BATCH_STEP_COLOR, subBar,
+} from '../constants';
 
 const { Title, Text } = Typography;
 
-const STATUS_META: Record<string, { color: string; label: string }> = {
-  idle: { color: 'default', label: '空闲' },
-  running: { color: 'processing', label: '更新中' },
-  success: { color: 'success', label: '成功' },
-  failed: { color: 'error', label: '失败' },
-};
-
-const FACTOR_STATUS_COLOR: Record<string, string> = {
-  有效: 'green',
-  衰减: 'gold',
-  失效: 'red',
-};
-
-const REGIME_COLOR: Record<string, string> = {
-  恐惧: 'red',
-  中性: 'default',
-  贪婪: 'green',
-};
-const REGIME_STATE_COLOR: Record<string, string> = {
-  bull: 'green',
-  neutral: 'default',
-  bear: 'orange',
-  panic: 'red',
-};
-const SIGNAL_COLOR: Record<string, string> = {
-  买入: 'green',
-  半仓: 'gold',
-  空仓: 'red',
-};
-const BATCH_STEP_COLOR: Record<string, string> = {
-  ok: 'green',
-  fail: 'red',
-};
-
-function subBar(label: string, v: number | null | undefined) {
-  if (v == null) return null;
-  return (
-    <div style={{ marginTop: 4 }}>
-      <Text type="secondary" style={{ fontSize: 12 }}>{label}：{v.toFixed(1)}</Text>
-      <Progress
-        percent={Math.round(v)}
-        size="small"
-        showInfo={false}
-        strokeColor={v >= 50 ? COLORS.up : COLORS.down}
-      />
-    </div>
-  );
+// 运行记录兼容两套 schema：手动运行(RunRecord) 与 批处理运行(BatchRunRecord)（P3-audit 修复）
+interface RunRow {
+  run_id: string;
+  trigger: string;
+  status: string;
+  started_at: string | null;
+  start_ts?: string | null;
+  target_date?: string | null;
+  date?: string | null;
+  reached_step?: string;
+  progress?: number;
+  total?: number;
+  duration_sec?: number;
+  duration_s?: number;
+  error?: string | null;
+  kind?: string;
 }
 
 function fmtPct(v: number | null | undefined) {
@@ -66,20 +37,22 @@ function fmtPct(v: number | null | undefined) {
 
 export default function Monitor() {
   const [ov, setOv] = useState<MonitorOverview | null>(null);
-  const [runs, setRuns] = useState<RunRecord[]>([]);
+  const [runs, setRuns] = useState<RunRow[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   const loadOverview = () =>
     getMonitorOverview()
       .then((r) => setOv(r.data))
-      .catch(() => {/* 观测层降级不影响页面 */})
+      .catch((e) => setError(errMsg(e)))
       .finally(() => setLoading(false));
   const loadHistory = () =>
     getMonitorHistory(50)
-      .then((r) => setRuns(r.data.runs))
-      .catch(() => {});
+      .then((r) => setRuns(r.data.runs as RunRow[]))
+      .catch((e) => setError(errMsg(e)));
 
   useEffect(() => {
+    setError(null);
     loadOverview();
     loadHistory();
     const t1 = setInterval(loadOverview, 4000);
@@ -215,13 +188,11 @@ export default function Monitor() {
   );
 
   // —— 运行记录卡 ——
-  // 运行记录同时存在两套 schema：手动运行(RunRecord: started_at/duration_sec/...)
-  // 与批处理运行(BatchRunRecord: start_ts/duration_s/...)。列表需兼容两种（P3-audit 修复）。
   const runColumns = [
     {
       title: '开始', dataIndex: 'started_at',
-      render: (_: any, r: RunRecord) => {
-        const t = (r as any).started_at || (r as any).start_ts;
+      render: (_: unknown, r: RunRow) => {
+        const t = r.started_at || r.start_ts;
         return t ? t.replace('T', ' ') : '-';
       },
     },
@@ -238,19 +209,19 @@ export default function Monitor() {
     },
     {
       title: '目标日', dataIndex: 'target_date',
-      render: (_: any, r: RunRecord) => (r as any).target_date || (r as any).date || '-',
+      render: (_: unknown, r: RunRow) => r.target_date || r.date || '-',
     },
     {
       title: '到达步骤', dataIndex: 'reached_step',
-      render: (_: any, r: RunRecord) => (r as any).reached_step ?? '-',
+      render: (_: unknown, r: RunRow) => r.reached_step ?? '-',
     },
     {
       title: '进度',
-      render: (_: any, r: RunRecord) => `${(r as any).progress ?? '-'}/${(r as any).total ?? '-'}`,
+      render: (_: unknown, r: RunRow) => `${(r.progress ?? '-')}/${(r.total ?? '-')}`,
     },
     {
       title: '耗时', dataIndex: 'duration_sec',
-      render: (_: any, r: RunRecord) => `${(r as any).duration_sec ?? (r as any).duration_s ?? '-'}s`,
+      render: (_: unknown, r: RunRow) => `${(r.duration_sec ?? r.duration_s ?? '-')}s`,
     },
     {
       title: '错误', dataIndex: 'error',
@@ -355,6 +326,9 @@ export default function Monitor() {
   return (
     <div className="page">
       <Title level={3}>运维监控</Title>
+      {error && (
+        <Alert style={{ marginBottom: 16 }} type="error" showIcon message="监控数据加载失败" description={error} />
+      )}
       <Row gutter={16}>
         <Col span={8}>{dataCard}</Col>
         <Col span={8}>{factorCard}</Col>

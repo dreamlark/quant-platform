@@ -409,7 +409,7 @@ quant-platform/
 | `tests/test_smoke.py` | 冒烟测试（核心链路可跑、无 key 降级） |
 | `tests/test_api.py` | API 端点测试 |
 | `tests/test_api_qa.py` | API 质量/边界测试 |
-| `tests/test_fe_constraints.py` | 前端约束测试（暗色/简体中文/无外部依赖） |
+| `tests/test_fe_constraints.py` | 前端约束测试（暗色/简体中文/无运行时 CDN 依赖） |
 | `tests/test_kronos_adapter.py` | Kronos 适配器单测（离线/在线解析） |
 | `tests/test_prediction_kronos_integration.py` | 预测+Kronos 集成测试 |
 | `tests/test_sentiment_t0.py` | T0 量价代理情绪单测（形状/范围/组件/无前视） |

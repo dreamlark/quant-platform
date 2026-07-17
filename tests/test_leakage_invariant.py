@@ -243,15 +243,70 @@ def test_prediction_baseline_uses_past_only():
     assert abs(a - b) < 1e-9, "baseline 在篡改未来价格后变化 -> 前视泄漏"
 
 
-def test_run_daily_ordering_fusion_before_market_sentiment():
-    """时序护栏：run_daily 必须先 fusion 后 market_sentiment，
-    否则融合会读到「当日」（尚未落库的）regime，构成前视。"""
-    import inspect
+def test_sentiment_index_before_is_strict_t_minus_1():
+    """运行时不变量（替代 inspect.getsource 文本序断言，§五.15）：
 
-    from scheduler.orchestrator import Orchestrator
+    ``Repository.load_sentiment_index_before(target)`` 必须返回**严格早于** target 的
+    最新一行（T-1），即便 target 当日已落库 sentiment_index 也不得返回——这是
+    fusion 融合层 regime 调节 point-in-time 边界的核心（``Orchestrator._latest_regime``
+    即委托此方法，故与 run_daily 步骤顺序解耦：无论 fusion / market_sentiment 谁先跑，
+    融合都只能用 T-1 的 regime，不构前视偏差）。
+    """
+    from storage.duckdb_client import DuckDBClient
+    from storage.repository import Repository
 
-    src = inspect.getsource(Orchestrator.run_daily)
-    assert src.index("step_fusion") < src.index("step_market_sentiment"), (
-        "run_daily 必须先调用 step_fusion 再 step_market_sentiment，"
-        "否则融合层会误用当日 regime（前视偏差）"
+    client = DuckDBClient(":memory:")
+    repo = Repository(client, client)
+
+    target = dt.date(2025, 6, 13)
+    t_minus_1 = target - dt.timedelta(days=1)
+    rows = pd.DataFrame(
+        [
+            {
+                "date": t_minus_1,
+                "index_value": 80.0,
+                "regime_state": "恐惧",
+                "regime": "贪婪",
+                "thermometer": 80.0,
+                "signal": "空仓",
+                "gsisi": 0.0,
+                "sub_volume": 50.0,
+                "sub_price": 50.0,
+                "sub_money": None,
+                "sub_valuation": None,
+                "sub_riskpremium": None,
+            },
+            {
+                "date": target,
+                "index_value": 90.0,
+                "regime_state": "贪婪",
+                "regime": "贪婪",
+                "thermometer": 90.0,
+                "signal": "空仓",
+                "gsisi": 0.0,
+                "sub_volume": 50.0,
+                "sub_price": 50.0,
+                "sub_money": None,
+                "sub_valuation": None,
+                "sub_riskpremium": None,
+            },
+        ]
     )
+
+    # 仅 T-1 落库：返回 T-1
+    repo.save_sentiment_index(rows[rows["date"] == t_minus_1])
+    got = repo.load_sentiment_index_before(target)
+    assert not got.empty and str(got.iloc[0]["regime_state"]) == "恐惧"
+
+    # 追加当日 regime：仍严格只返回 T-1（不得前视当日）
+    repo.save_sentiment_index(rows)
+    got = repo.load_sentiment_index_before(target)
+    assert not got.empty and str(got.iloc[0]["regime_state"]) == "恐惧", (
+        "load_sentiment_index_before 必须严格取 T-1，不得返回当日 regime（前视偏差）"
+    )
+
+    # 仅当日、无 T-1：降级为空（融合层随后降级为无 regime 调节）
+    client2 = DuckDBClient(":memory:")
+    repo2 = Repository(client2, client2)
+    repo2.save_sentiment_index(rows[rows["date"] == target])
+    assert repo2.load_sentiment_index_before(target).empty, "无 T-1 regime 时应返回空"

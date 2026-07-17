@@ -1,5 +1,5 @@
-import React from 'react';
-import { Layout, Menu, ConfigProvider, Typography } from 'antd';
+import { useEffect } from 'react';
+import { Layout, Menu, ConfigProvider, theme } from 'antd';
 import {
   DashboardOutlined,
   FunctionOutlined,
@@ -17,7 +17,7 @@ import Stocks from './pages/Stocks';
 import Watchlist from './pages/Watchlist';
 import Monitor from './pages/Monitor';
 
-const { Sider, Content, Header } = Layout;
+const { Sider, Content } = Layout;
 
 const DISCLAIMER =
   '【免责声明】本平台内容仅为量化分析信号与研究观点，不构成任何证券买卖建议。投资有风险，决策需谨慎。';
@@ -31,6 +31,17 @@ const menuItems = [
   { key: '/monitor', icon: <MonitorOutlined />, label: '运维监控' },
 ];
 
+// 把 antd 暗色 token 注入到 :root CSS 变量，供 index.css 引用（替代硬编码颜色）
+function RootStyle() {
+  const { token } = theme.useToken();
+  useEffect(() => {
+    const root = document.documentElement;
+    root.style.setProperty('--app-color-bg-base', token.colorBgBase);
+    root.style.setProperty('--app-color-warning', token.colorWarning);
+  }, [token]);
+  return null;
+}
+
 export default function App() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -38,6 +49,7 @@ export default function App() {
 
   return (
     <ConfigProvider theme={darkTheme}>
+      <RootStyle />
       <Layout style={{ minHeight: '100vh' }}>
         <Sider theme="dark" breakpoint="lg" collapsible>
           <div className="app-logo">量化分析平台</div>

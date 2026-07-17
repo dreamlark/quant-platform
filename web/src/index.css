@@ -3,7 +3,7 @@ body,
 #root {
   height: 100%;
   margin: 0;
-  background: #141414;
+  background: var(--app-color-bg-base, #141414);
   color: rgba(255, 255, 255, 0.85);
 }
 
@@ -21,7 +21,7 @@ body,
 
 .disclaimer {
   font-size: 12px;
-  color: #faad14;
+  color: var(--app-color-warning, #faad14);
   padding: 4px 16px;
   background: rgba(250, 173, 20, 0.08);
   border-bottom: 1px solid rgba(250, 173, 20, 0.2);

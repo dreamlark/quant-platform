@@ -193,9 +193,10 @@ class Orchestrator:
     def step_fusion(self, date: dt.date) -> pd.DataFrame:
         uni = self.repo.load_universe(date, in_universe=True)
         codes = uni["code"].tolist()
-        # regime 调节：使用最近一次（T-1）市场情绪 regime（point-in-time 正确——
-        # 当日情绪指数在 step_market_sentiment 之后才落库，不能用于当日信号）。
-        regime = self._latest_regime()
+        # regime 调节：使用严格 T-1 的市场情绪 regime（point-in-time 正确——
+        # 当日情绪指数在 step_market_sentiment 之后才落库，不能用于当日信号；
+        # 即便当天已跑过 market_sentiment 再重跑 fusion，也只取 date < 当日 的 T-1）。
+        regime = self._latest_regime(date)
         signals = self.signal_pool.fuse(
             self.neutralized,
             self.tech_df,
@@ -210,10 +211,17 @@ class Orchestrator:
         self.repo.save_signals(signals)
         return signals
 
-    def _latest_regime(self) -> Optional[str]:
-        """读取最近一次市场状态 regime_state（供融合层 regime 调节用，T-1 已落库）。"""
+    def _latest_regime(self, target_date: Optional[dt.date] = None) -> Optional[str]:
+        """读取严格早于 target_date 的最近一次市场状态 regime_state（T-1 已落库）。
+
+        使用 ``date < target_date`` 严格取 T-1，避免当天已跑过 market_sentiment 再重跑
+        fusion 时误读当日 regime（point-in-time 边界，P1-2）。
+        """
         try:
-            idx = self.repo.load_sentiment_index(latest=True)
+            if target_date is not None:
+                idx = self.repo.load_sentiment_index_before(target_date)
+            else:
+                idx = self.repo.load_sentiment_index(latest=True)
             if idx is not None and not idx.empty and "regime_state" in idx.columns:
                 return str(idx.iloc[0]["regime_state"])
         except Exception as exc:  # noqa: BLE001

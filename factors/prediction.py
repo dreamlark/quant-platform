@@ -329,6 +329,9 @@ class PredictionGenerator:
             all_pairs = list(ckpt.get("pairs", []))          # [[dir_pred, label], ...] 跨运行累计
             ckpt_target_rows = [_row_deser(r) for r in ckpt.get("target_rows", [])]
             new_target_rows: List[Dict] = []
+            # 在外层初始化并在循环内累计（断点续跑时若全部标的已 done，循环体不进入
+            # 也不会触发 UnboundLocalError；同时让 IC 覆盖全部标的而非仅最后一只）
+            ic_pairs: List[Dict] = []  # (date, code, ret_pred, actual_fwd_ret) 用于 IC
 
             def _save_ckpt() -> None:
                 _tmp = ckpt_path + ".tmp"
@@ -359,7 +362,7 @@ class PredictionGenerator:
                 #    导致 H5/H10 实际零样本、无法评估。改为每周期用自身的有效时点。
                 #    由此 pairs 顺序变为 [H1×N, H5×N, H10×N]（按周期外层、时点的内层）。
                 stock_new_pairs: List[List[int]] = []
-                ic_pairs: List[Dict] = []  # (date, code, ret_pred, actual_fwd_ret) 用于 IC
+                # ic_pairs 在外层声明并跨股票累计（见循环前初始化），此处不再重置
                 for h in self.horizons:
                     ld = lab[f"label_dir_{h}"]
                     # 关键：label_dir 对「无未来数据」的时点是 fillna(0)（非 NaN），

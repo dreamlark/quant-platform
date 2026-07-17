@@ -329,3 +329,131 @@ class Repository:
                 "sentiment_index", "SELECT * FROM sentiment_index WHERE date = ?", [d]
             )
         return self._read("sentiment_index", "SELECT * FROM sentiment_index ORDER BY date")
+
+    def load_sentiment_index_before(self, target_date: dt.date) -> pd.DataFrame:
+        """读取严格早于 target_date 的最新一条市场情绪指数（point-in-time T-1）。
+
+        供融合层 regime 调节使用：当日情绪指数在 step_market_sentiment 之后才落库，
+        故必须排除当日，严格取 T-1，避免重跑 fusion 时误读当日 regime（P1-2 边界）。
+        """
+        try:
+            d = self.analytics.execute(
+                "SELECT MAX(date) FROM sentiment_index WHERE date < ?", [target_date]
+            ).fetchone()[0]
+            if d is None:
+                return pd.DataFrame()
+            return self._read(
+                "sentiment_index", "SELECT * FROM sentiment_index WHERE date = ?", [d]
+            )
+        except Exception:  # noqa: BLE001
+            return pd.DataFrame()
+
+    # ===== 监控聚合（只读，供运维监控层） =====
+    # 说明：替代 api/routers/monitor.py 直连 DuckDB 的临时 SQL，统一走仓储层，
+    # 保证 schema 演进时与 Repository 同步（P2-1 边界治理）。
+
+    def data_freshness(self, stale_days: int = 4) -> Dict:
+        """行情库新鲜度：最新交易日 / 距今天数 / 是否过期 / 标的覆盖 / 可投资域数量。"""
+        try:
+            row = self.market.execute(
+                "SELECT max(date), count(distinct code) FROM daily_bars"
+            ).fetchone()
+            latest, n_codes = row[0], row[1]
+            u = self.market.execute(
+                "SELECT count(*) FROM universe WHERE in_universe=TRUE "
+                "AND date=(SELECT max(date) FROM universe)"
+            ).fetchone()[0]
+            days_since = (dt.date.today() - latest).days if latest else None
+            is_stale = bool(days_since is not None and days_since > stale_days)
+            return {
+                "latest_date": str(latest) if latest else None,
+                "days_since": days_since,
+                "is_stale": is_stale,
+                "stock_count": n_codes,
+                "universe_count": int(u) if u is not None else 0,
+            }
+        except Exception as exc:  # noqa: BLE001
+            return {"error": f"{type(exc).__name__}: {exc}"}
+
+    def factor_health_summary(self) -> Dict:
+        """因子体检摘要：最新日、总量、按状态分布、平均 ICIR。"""
+        try:
+            d = self.analytics.execute("SELECT max(date) FROM factor_health").fetchone()[0]
+            if not d:
+                return {"latest_date": None, "total": 0, "by_status": {}, "avg_icir": None}
+            rows = self.analytics.execute(
+                "SELECT status, count(*) FROM factor_health WHERE date=? GROUP BY status", [d]
+            ).fetchall()
+            avg = self.analytics.execute(
+                "SELECT avg(icir) FROM factor_health WHERE date=?", [d]
+            ).fetchone()[0]
+            by_status = {s: int(c) for s, c in rows}
+            return {
+                "latest_date": str(d),
+                "total": sum(by_status.values()),
+                "by_status": by_status,
+                "avg_icir": round(float(avg), 4) if avg is not None else None,
+            }
+        except Exception as exc:  # noqa: BLE001
+            return {"error": f"{type(exc).__name__}: {exc}"}
+
+    def model_status_summary(self) -> List[Dict]:
+        """各预测模型状态：最新日、dir_acc、mape、覆盖率。"""
+        try:
+            ph = self.analytics.execute(
+                "SELECT model_name, max(date) FROM predict_health GROUP BY model_name"
+            ).fetchall()
+            out: List[Dict] = []
+            for name, d in ph:
+                acc, mape = self.analytics.execute(
+                    "SELECT dir_acc, mape FROM predict_health WHERE model_name=? AND date=?",
+                    [name, d],
+                ).fetchone()
+                cov = self.analytics.execute(
+                    "SELECT count(distinct code) FROM predict_values "
+                    "WHERE model_name=? AND date=?",
+                    [name, d],
+                ).fetchone()[0]
+                out.append(
+                    {
+                        "model_name": name,
+                        "date": str(d),
+                        "dir_acc": round(float(acc), 4) if acc is not None else None,
+                        "mape": round(float(mape), 4) if mape is not None else None,
+                        "coverage_count": int(cov) if cov is not None else 0,
+                    }
+                )
+            return out
+        except Exception as exc:  # noqa: BLE001
+            return [{"error": f"{type(exc).__name__}: {exc}"}]
+
+    def other_freshness(self) -> Dict:
+        """其它结果表新鲜度：signals / sector_rotation / daily_brief 最新日。"""
+        try:
+            sig = self.analytics.execute("SELECT max(date) FROM signals").fetchone()[0]
+            sec = self.analytics.execute("SELECT max(date) FROM sector_rotation").fetchone()[0]
+            brf = self.analytics.execute("SELECT max(date) FROM daily_brief").fetchone()[0]
+            return {
+                "signals_date": str(sig) if sig else None,
+                "sector_date": str(sec) if sec else None,
+                "brief_date": str(brf) if brf else None,
+            }
+        except Exception as exc:  # noqa: BLE001
+            return {"error": f"{type(exc).__name__}: {exc}"}
+
+    def latest_market_sentiment(self) -> Dict:
+        """市场级综合情绪指数最新一行（供运维监控层）。
+
+        复用 load_sentiment_index（统一走仓储层），返回 dict 含 available 标记，
+        不再在 API 层直连 DuckDB 拼 SELECT *。
+        """
+        try:
+            df = self.load_sentiment_index(latest=True)
+            if df is None or df.empty:
+                return {"latest_date": None, "available": False}
+            rec = df.iloc[0].to_dict()
+            rec["latest_date"] = str(rec["date"]) if "date" in rec else None
+            rec["available"] = True
+            return rec
+        except Exception as exc:  # noqa: BLE001
+            return {"available": False, "error": f"{type(exc).__name__}: {exc}"}

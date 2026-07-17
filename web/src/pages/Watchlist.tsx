@@ -1,6 +1,6 @@
-import React, { useEffect, useState } from 'react';
-import { Card, Table, Tag, Spin, Empty, Modal, Form, InputNumber, Input, Button, Popconfirm, Typography, Space } from 'antd';
-import { api, WatchItem } from '../api/client';
+import { useEffect, useState } from 'react';
+import { Card, Table, Tag, Spin, Empty, Modal, Form, InputNumber, Input, Button, Popconfirm, Typography, Space, Alert, message } from 'antd';
+import { api, WatchItem, errMsg } from '../api/client';
 import { COLORS } from '../theme';
 
 const { Title } = Typography;
@@ -11,15 +11,24 @@ function dirTag(d?: number) {
   return <Tag>中性</Tag>;
 }
 
+function fmt(v: number | null | undefined, digits: number) {
+  return v == null || isNaN(v) ? '-' : v.toFixed(digits);
+}
+
 export default function Watchlist() {
   const [data, setData] = useState<WatchItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [open, setOpen] = useState(false);
   const [form] = Form.useForm();
+  const [error, setError] = useState<string | null>(null);
 
   const load = () => {
     setLoading(true);
-    api.get('/watchlist').then((r) => setData(r.data)).finally(() => setLoading(false));
+    setError(null);
+    api.get('/watchlist')
+      .then((r) => setData(r.data))
+      .catch((e) => { setError(errMsg(e)); message.error('自选股加载失败'); })
+      .finally(() => setLoading(false));
   };
   useEffect(load, []);
 
@@ -41,14 +50,14 @@ export default function Watchlist() {
   const columns = [
     { title: '代码', dataIndex: 'code' },
     { title: '名称', dataIndex: 'name' },
-    { title: '成本', dataIndex: 'cost_price', render: (v: number) => v.toFixed(2) },
-    { title: '现价', dataIndex: 'current_price', render: (v?: number) => (v ? v.toFixed(2) : '-') },
+    { title: '成本', dataIndex: 'cost_price', render: (v: number | null | undefined) => fmt(v, 2) },
+    { title: '现价', dataIndex: 'current_price', render: (v?: number) => fmt(v, 2) },
     { title: '持仓盈亏%', dataIndex: 'pnl_pct', render: (v?: number) => (v == null ? '-' : <span style={{ color: v >= 0 ? COLORS.up : COLORS.down }}>{v.toFixed(2)}%</span>) },
     { title: '信号', dataIndex: 'direction', render: (d?: number) => (d == null ? '-' : dirTag(d)) },
-    { title: '置信度', dataIndex: 'confidence', render: (v?: number) => (v == null ? '-' : v.toFixed(2)) },
+    { title: '置信度', dataIndex: 'confidence', render: (v?: number) => fmt(v, 2) },
     {
       title: '操作',
-      render: (_: any, r: WatchItem) => (
+      render: (_: unknown, r: WatchItem) => (
         <Popconfirm title="删除该自选股？" onConfirm={() => onDelete(r.code)}>
           <Button size="small" danger>删除</Button>
         </Popconfirm>
@@ -59,6 +68,9 @@ export default function Watchlist() {
   return (
     <div className="page">
       <Title level={3}>自选股（记账持仓）</Title>
+      {error && (
+        <Alert style={{ marginBottom: 16 }} type="error" showIcon message="自选股加载失败" description={error} />
+      )}
       <Space style={{ marginBottom: 16 }}>
         <Button type="primary" onClick={() => setOpen(true)}>添加持仓</Button>
       </Space>

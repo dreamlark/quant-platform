@@ -1,19 +1,31 @@
-import React, { useEffect, useState } from 'react';
-import { Card, Table, Tag, Spin, Empty, DatePicker, Space } from 'antd';
-import { api, Sector } from '../api/client';
-import { EChart, AXIS_STYLE, baseGrid } from '../components/charts';
+import { useEffect, useState } from 'react';
+import { Card, Table, Tag, Spin, Empty, DatePicker, Space, Alert } from 'antd';
+import { Sector, apiGet, errMsg } from '../api/client';
+import { EChart, AXIS_STYLE, baseGrid, EChartsOption } from '../components/charts';
 import { COLORS } from '../theme';
 import dayjs from 'dayjs';
+
+function fmtPct(v: number | null | undefined) {
+  return v == null || isNaN(v) ? '-' : `${(v * 100).toFixed(2)}%`;
+}
+function fmt(v: number | null | undefined, digits: number) {
+  return v == null || isNaN(v) ? '-' : v.toFixed(digits);
+}
 
 export default function Sectors() {
   const [data, setData] = useState<Sector[]>([]);
   const [loading, setLoading] = useState(true);
   const [date, setDate] = useState<string>('');
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     const q = date ? `?date=${date}` : '';
     setLoading(true);
-    api.get(`/sectors/rotation${q}`).then((r) => setData(r.data)).finally(() => setLoading(false));
+    setError(null);
+    apiGet<Sector[]>(`/sectors/rotation${q}`)
+      .then(setData)
+      .catch((e) => setError(errMsg(e)))
+      .finally(() => setLoading(false));
   }, [date]);
 
   if (loading) return <div className="page"><Spin /></div>;
@@ -21,13 +33,13 @@ export default function Sectors() {
   const columns = [
     { title: '板块', dataIndex: 'sector_name' },
     { title: '代码', dataIndex: 'sector_code' },
-    { title: '涨跌幅', dataIndex: 'change_pct', render: (v: number) => `${(v * 100).toFixed(2)}%` },
-    { title: 'RS', dataIndex: 'rs', render: (v: number) => v.toFixed(3) },
-    { title: '资金净流入', dataIndex: 'net_inflow', render: (v: number) => v.toFixed(0) },
+    { title: '涨跌幅', dataIndex: 'change_pct', render: (v: number | null | undefined) => fmtPct(v) },
+    { title: 'RS', dataIndex: 'rs', render: (v: number | null | undefined) => fmt(v, 3) },
+    { title: '资金净流入', dataIndex: 'net_inflow', render: (v: number | null | undefined) => fmt(v, 0) },
     { title: '轮动', dataIndex: 'rotation_signal', render: (v: string) => <Tag color={v === '进攻' ? 'red' : v === '防御' ? 'green' : 'default'}>{v}</Tag> },
   ];
 
-  const option = {
+  const option: EChartsOption = {
     grid: baseGrid,
     tooltip: { trigger: 'axis' },
     legend: { data: ['涨跌幅', 'RS'], textStyle: { color: 'rgba(255,255,255,0.65)' } },
@@ -37,13 +49,16 @@ export default function Sectors() {
       { type: 'value', name: 'RS', ...AXIS_STYLE },
     ],
     series: [
-      { name: '涨跌幅', type: 'bar', data: data.map((s) => +(s.change_pct * 100).toFixed(2)), itemStyle: { color: COLORS.factor } },
-      { name: 'RS', type: 'line', yAxisIndex: 1, data: data.map((s) => +s.rs.toFixed(4)), itemStyle: { color: COLORS.predict } },
+      { name: '涨跌幅', type: 'bar', data: data.map((s) => +(s.change_pct == null ? 0 : (s.change_pct * 100).toFixed(2))), itemStyle: { color: COLORS.factor } },
+      { name: 'RS', type: 'line', yAxisIndex: 1, data: data.map((s) => +(s.rs == null ? 0 : s.rs.toFixed(4))), itemStyle: { color: COLORS.predict } },
     ],
   };
 
   return (
     <div className="page">
+      {error && (
+        <Alert style={{ marginBottom: 16 }} type="error" showIcon message="板块数据加载失败" description={error} />
+      )}
       <Space style={{ marginBottom: 16 }}>
         <span>日期</span>
         <DatePicker onChange={(_, s) => setDate((Array.isArray(s) ? s[0] : s) || '')} defaultValue={date ? dayjs(date) : undefined} />

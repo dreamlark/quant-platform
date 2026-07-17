@@ -1,14 +1,22 @@
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
-import { Card, Input, Table, Tag, Spin, Empty, Row, Col, Statistic, AutoComplete, Typography } from 'antd';
-import { api, SignalDetail } from '../api/client';
-import { EChart, AXIS_STYLE, baseGrid } from '../components/charts';
+import { Card, Table, Tag, Spin, Empty, Row, Col, Statistic, AutoComplete, Typography, Alert } from 'antd';
+import { SignalDetail, apiGet, errMsg } from '../api/client';
+import { EChart, AXIS_STYLE, baseGrid, EChartsOption } from '../components/charts';
 import { COLORS } from '../theme';
 
 const { Title } = Typography;
 
 function dirText(d: number) {
   return d === 1 ? '看多' : d === -1 ? '看空' : '中性';
+}
+
+interface StockBar {
+  date: string;
+  open: number;
+  close: number;
+  low: number;
+  high: number;
 }
 
 export default function Stocks() {
@@ -18,27 +26,33 @@ export default function Stocks() {
   const [code, setCode] = useState<string>(paramCode || '');
   useEffect(() => { setCode(paramCode || ''); }, [paramCode]);
   const [detail, setDetail] = useState<SignalDetail | null>(null);
-  const [bars, setBars] = useState<any[]>([]);
+  const [bars, setBars] = useState<StockBar[]>([]);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const onSearch = async (q: string) => {
     if (!q) return;
-    const r = await api.get('/stocks/search', { params: { q } });
-    setOptions(r.data.map((x: any) => ({ value: x.code, label: `${x.code} ${x.name}` })));
+    const r = await apiGet<{ code: string; name: string }[]>('/stocks/search', { params: { q } });
+    setOptions(r.map((x) => ({ value: x.code, label: `${x.code} ${x.name}` })));
   };
 
   useEffect(() => {
     if (!code) return;
     setLoading(true);
-    Promise.all([api.get(`/stocks/${code}`), api.get(`/stocks/${code}/bars`)])
+    setError(null);
+    Promise.all([
+      apiGet<SignalDetail>(`/stocks/${code}`),
+      apiGet<StockBar[]>(`/stocks/${code}/bars`),
+    ])
       .then(([d, b]) => {
-        setDetail(d.data);
-        setBars(b.data);
+        setDetail(d);
+        setBars(b);
       })
+      .catch((e) => setError(errMsg(e)))
       .finally(() => setLoading(false));
   }, [code]);
 
-  const contribOption = detail
+  const contribOption: EChartsOption | null = detail
     ? {
         grid: baseGrid,
         tooltip: { trigger: 'axis' },
@@ -53,13 +67,15 @@ export default function Stocks() {
               +detail.sentiment_contrib.toFixed(3),
               +detail.predict_contrib.toFixed(3),
             ],
-            itemStyle: { color: (p: any) => [COLORS.factor, COLORS.tech, COLORS.sentiment, COLORS.predict][p.dataIndex] },
+            itemStyle: {
+              color: (p) => [COLORS.factor, COLORS.tech, COLORS.sentiment, COLORS.predict][p.dataIndex as number],
+            },
           },
         ],
       }
     : null;
 
-  const candleOption = bars.length
+  const candleOption: EChartsOption | null = bars.length
     ? {
         grid: { left: 50, right: 16, top: 20, bottom: 40 },
         tooltip: { trigger: 'axis' },
@@ -77,12 +93,15 @@ export default function Stocks() {
 
   const factorColumns = [
     { title: '因子', dataIndex: 'factor_name' },
-    { title: '值', dataIndex: 'value', render: (v: number) => (isNaN(v) ? '-' : v.toFixed(4)) },
+    { title: '值', dataIndex: 'value', render: (v: number | null | undefined) => (v == null || isNaN(v) ? '-' : v.toFixed(4)) },
   ];
 
   return (
     <div className="page">
       <Title level={3}>股票信号拆解</Title>
+      {error && (
+        <Alert style={{ marginBottom: 16 }} type="error" showIcon message="个股数据加载失败" description={error} />
+      )}
       <AutoComplete
         style={{ width: 320, marginBottom: 16 }}
         options={options}

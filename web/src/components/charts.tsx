@@ -1,7 +1,10 @@
 import ReactECharts from 'echarts-for-react';
+import type { EChartsOption } from 'echarts';
+
+export type { EChartsOption };
 
 // 通用 ECharts 封装（暗色）
-export function EChart({ option, height = 320 }: { option: any; height?: number }) {
+export function EChart({ option, height = 320 }: { option: EChartsOption; height?: number }) {
   return (
     <ReactECharts
       option={option}
