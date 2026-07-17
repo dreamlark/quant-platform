@@ -1,26 +1,20 @@
 import { useEffect, useState } from 'react';
 import {
-  Card, Col, Row, Table, Typography, Tag, Spin, Statistic, Empty,
+  Card, Col, Row, Table, Typography, Tag, Statistic, Empty,
   Button, Switch, Space, Progress, Alert, Tooltip,
 } from 'antd';
 import {
-  DashboardSummary, Sector, MarketSentimentView,
-  UpdateStatus, triggerUpdate, getUpdateStatus, startAuto, stopAuto,
+  DashboardSummary, Sector, UpdateStatus,
+  triggerUpdate, getUpdateStatus, startAuto, stopAuto,
   apiGet, errMsg, isAxiosConflict,
 } from '../api/client';
-import { EChart, AXIS_STYLE, baseGrid, EChartsOption } from '../components/charts';
-import { COLORS } from '../theme';
+import { EChart, catAxis, valAxis, baseGrid, tooltipStyle, EChartsOption } from '../components/charts';
+import { COLORS, tempColor } from '../theme';
 import {
-  STATUS_META, REGIME_COLOR, REGIME_STATE_COLOR, SIGNAL_COLOR, subBar,
-} from '../constants';
+  PageHeader, PageLoading, dirTag, StatusTag, SentimentCard,
+} from '../components/common';
 
-const { Title, Paragraph, Text } = Typography;
-
-function dirTag(d: number) {
-  if (d === 1) return <Tag color="red">看多</Tag>;
-  if (d === -1) return <Tag color="green">看空</Tag>;
-  return <Tag>中性</Tag>;
-}
+const { Paragraph, Text } = Typography;
 
 export default function Dashboard() {
   const [data, setData] = useState<DashboardSummary | null>(null);
@@ -91,8 +85,8 @@ export default function Dashboard() {
     }
   };
 
-  if (loading) return <div className="page"><Spin /></div>;
-  if (!data) return <div className="page"><Empty description="暂无数据，请先运行数据链路" /></div>;
+  if (loading) return <PageLoading tip="正在加载每日简报…" />;
+  if (!data) return <PageLoading tip="暂无数据，请先运行数据链路" />;
 
   const signalColumns = [
     { title: '代码', dataIndex: 'code' },
@@ -112,79 +106,30 @@ export default function Dashboard() {
     { title: '代码', dataIndex: 'code' },
     { title: '名称', dataIndex: 'name' },
     { title: '现价', dataIndex: 'current_price', render: (v?: number) => (v ? v.toFixed(2) : '-') },
-    { title: '盈亏%', dataIndex: 'pnl_pct', render: (v?: number) => (v == null ? '-' : <span style={{ color: v >= 0 ? COLORS.up : COLORS.down }}>{v.toFixed(2)}%</span>) },
+    { title: '持仓盈亏%', dataIndex: 'pnl_pct', render: (v?: number) => (v == null ? '-' : <span style={{ color: v >= 0 ? COLORS.up : COLORS.down }}>{v.toFixed(2)}%</span>) },
     { title: '信号', dataIndex: 'direction', render: (d?: number) => (d == null ? '-' : dirTag(d)) },
   ];
 
   const sectorOption: EChartsOption = {
     grid: baseGrid,
-    tooltip: { trigger: 'axis' },
-    xAxis: { type: 'category', data: data.sectors.map((s: Sector) => s.sector_name), ...AXIS_STYLE },
-    yAxis: { type: 'value', ...AXIS_STYLE },
+    tooltip: { trigger: 'axis', ...tooltipStyle },
+    xAxis: catAxis(data.sectors.map((s: Sector) => s.sector_name)),
+    yAxis: valAxis('涨跌幅%'),
     series: [
       {
         type: 'bar',
+        name: '涨跌幅%',
         data: data.sectors.map((s: Sector) => +(s.change_pct == null ? 0 : (s.change_pct * 100).toFixed(2))),
-        itemStyle: { color: (p) => ((p.value as number) >= 0 ? COLORS.up : COLORS.down) },
+        itemStyle: { color: (p: any) => ((p.value as number) >= 0 ? COLORS.up : COLORS.down) },
       },
     ],
   };
 
-  // —— 市场情绪指数卡（PRD §8 双卡：Dashboard 侧）——
-  const ms: MarketSentimentView | undefined = data.market_sentiment;
-  const sentimentCard = (
-    <Card className="metric-card" title="市场情绪指数（T1/T2/T3）">
-      {!ms || !ms.available ? (
-        <Text type="secondary">
-          {ms?.error ? ms.error : '暂无市场情绪数据（运行一次盘后流水线后生成）'}
-        </Text>
-      ) : (
-        <>
-          <Row gutter={16} align="middle">
-            <Col span={10}>
-              <Statistic title="综合情绪指数" value={ms.index_value ?? '-'} precision={1} />
-            </Col>
-            <Col span={14}>
-              <div>
-                <Tag color={REGIME_COLOR[ms.regime || ''] || 'default'}>{ms.regime || '-'}</Tag>
-                <Tag color={SIGNAL_COLOR[ms.signal || ''] || 'default'}>{ms.signal || '-'}</Tag>
-              </div>
-              <div style={{ marginTop: 6 }}>
-                <Text type="secondary" style={{ fontSize: 12 }}>
-                  温度计 {ms.thermometer ?? '-'} · GSISI {ms.gsisi ?? '-'}
-                </Text>
-              </div>
-              <div style={{ marginTop: 6 }}>
-                <Tag color={REGIME_STATE_COLOR[ms.regime_state || ''] || 'default'}>
-                  状态 {ms.regime_state || '-'}
-                </Tag>
-                <Text type="secondary" style={{ fontSize: 12 }}>
-                  置信缩放 ×{(ms.regime_scale ?? 1).toFixed(2)}
-                </Text>
-              </div>
-            </Col>
-          </Row>
-          <div style={{ marginTop: 8 }}>
-            {subBar('量能分', ms.sub_volume)}
-            {subBar('价格分', ms.sub_price)}
-            {subBar('资金分', ms.sub_money)}
-            {subBar('估值分', ms.sub_valuation)}
-            {subBar('风险溢价分', ms.sub_riskpremium)}
-          </div>
-          <div style={{ marginTop: 6 }}>
-            <Text type="secondary" style={{ fontSize: 12 }}>更新日 {ms.latest_date}</Text>
-          </div>
-        </>
-      )}
-    </Card>
-  );
-
-  const st = status ? STATUS_META[status.status] || STATUS_META.idle : STATUS_META.idle;
   const pct = status && status.total ? Math.round((status.progress / status.total) * 100) : 0;
 
   return (
     <div className="page">
-      <Title level={3}>每日简报 · {data.date}</Title>
+      <PageHeader title="每日简报" subtitle={`数据日期 ${data.date}`} />
       {error && (
         <Alert style={{ marginBottom: 16 }} type="error" showIcon message="看板数据加载失败" description={error} />
       )}
@@ -211,10 +156,10 @@ export default function Dashboard() {
             </Space>
           </Col>
           <Col>
-            <Tag color={st.color}>{st.label}</Tag>
+            <StatusTag status={status?.status} />
             {status?.auto_enabled && status.next_run && (
               <Tooltip title="下次自动运行时间（Asia/Shanghai）">
-                <Text type="secondary" style={{ fontSize: 12 }}>
+                <Text type="secondary" style={{ fontSize: 12, marginLeft: 8 }}>
                   下次：{status.next_run}
                 </Text>
               </Tooltip>
@@ -226,7 +171,13 @@ export default function Dashboard() {
                 percent={pct}
                 steps={status.total}
                 size="small"
-                status={status.status === 'failed' ? 'exception' : status.status === 'success' ? 'success' : 'active'}
+                status={
+                  status.status === 'failed'
+                    ? 'exception'
+                    : status.status === 'success'
+                      ? 'success'
+                      : 'active'
+                }
               />
             )}
           </Col>
@@ -253,40 +204,45 @@ export default function Dashboard() {
         )}
       </Card>
 
-      <Row gutter={16}>
-        <Col span={6}>
+      <Row gutter={[16, 16]}>
+        <Col xs={24} md={6}>
           <Card className="metric-card">
-            <Statistic title="市场温度计" value={data.market_temperature} suffix="/100" />
+            <Statistic
+              title="市场温度计"
+              value={data.market_temperature}
+              suffix="/100"
+              valueStyle={{ color: tempColor(data.market_temperature) }}
+            />
           </Card>
         </Col>
-        <Col span={18}>
+        <Col xs={24} md={18}>
           <Card className="metric-card" title="市场综述（LLM 研究观点）">
             {data.brief ? (
-              <Paragraph style={{ whiteSpace: 'pre-wrap' }}>{data.brief}</Paragraph>
+              <Paragraph style={{ whiteSpace: 'pre-wrap', margin: 0 }}>{data.brief}</Paragraph>
             ) : (
               <Empty description="简报未生成（无 LLM 密钥时仅展示信号）" />
             )}
           </Card>
         </Col>
       </Row>
-      <Row gutter={16} style={{ marginTop: 16 }}>
-        <Col span={24}>{sentimentCard}</Col>
+      <Row gutter={[16, 16]} style={{ marginTop: 0 }}>
+        <Col xs={24}><SentimentCard data={data.market_sentiment} /></Col>
       </Row>
-      <Row gutter={16}>
-        <Col span={14}>
+      <Row gutter={[16, 16]}>
+        <Col xs={24} lg={14}>
           <Card className="metric-card" title="今日信号清单（按置信度）">
-            <Table size="small" rowKey="code" columns={signalColumns} dataSource={data.top_signals} pagination={false} />
+            <Table size="small" rowKey="code" columns={signalColumns} dataSource={data.top_signals} pagination={false} scroll={{ x: 'max-content' }} />
           </Card>
         </Col>
-        <Col span={10}>
-          <Card className="metric-card" title="自选股异动" >
-            <Table size="small" rowKey="code" columns={watchColumns} dataSource={data.watchlist_alerts} pagination={false} />
+        <Col xs={24} lg={10}>
+          <Card className="metric-card" title="自选股异动">
+            <Table size="small" rowKey="code" columns={watchColumns} dataSource={data.watchlist_alerts} pagination={false} scroll={{ x: 'max-content' }} />
           </Card>
         </Col>
       </Row>
       <Card title="板块热力">
         <EChart option={sectorOption} height={300} />
-        <Table size="small" rowKey="sector_code" columns={sectorColumns} dataSource={data.sectors} pagination={false} />
+        <Table size="small" rowKey="sector_code" columns={sectorColumns} dataSource={data.sectors} pagination={false} scroll={{ x: 'max-content' }} />
       </Card>
     </div>
   );

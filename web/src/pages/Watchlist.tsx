@@ -1,15 +1,8 @@
 import { useEffect, useState } from 'react';
-import { Card, Table, Tag, Spin, Empty, Modal, Form, InputNumber, Input, Button, Popconfirm, Typography, Space, Alert, message } from 'antd';
+import { Card, Table, Empty, Modal, Form, InputNumber, Input, Button, Popconfirm, Space, Alert, message } from 'antd';
 import { api, WatchItem, errMsg } from '../api/client';
 import { COLORS } from '../theme';
-
-const { Title } = Typography;
-
-function dirTag(d?: number) {
-  if (d === 1) return <Tag color="red">看多</Tag>;
-  if (d === -1) return <Tag color="green">看空</Tag>;
-  return <Tag>中性</Tag>;
-}
+import { PageHeader, PageLoading, dirTag } from '../components/common';
 
 function fmt(v: number | null | undefined, digits: number) {
   return v == null || isNaN(v) ? '-' : v.toFixed(digits);
@@ -45,7 +38,7 @@ export default function Watchlist() {
     load();
   };
 
-  if (loading) return <div className="page"><Spin /></div>;
+  if (loading) return <PageLoading tip="正在加载自选股…" />;
 
   const columns = [
     { title: '代码', dataIndex: 'code' },
@@ -67,7 +60,7 @@ export default function Watchlist() {
 
   return (
     <div className="page">
-      <Title level={3}>自选股（记账持仓）</Title>
+      <PageHeader title="自选股（记账持仓）" />
       {error && (
         <Alert style={{ marginBottom: 16 }} type="error" showIcon message="自选股加载失败" description={error} />
       )}
@@ -75,10 +68,10 @@ export default function Watchlist() {
         <Button type="primary" onClick={() => setOpen(true)}>添加持仓</Button>
       </Space>
       {data.length === 0 ? (
-        <Empty description="暂无自选股，点击添加" />
+        <Card><Empty description="暂无自选股，点击添加" /></Card>
       ) : (
         <Card>
-          <Table size="small" rowKey="code" columns={columns} dataSource={data} pagination={false} />
+          <Table size="small" rowKey="code" columns={columns} dataSource={data} pagination={false} scroll={{ x: 'max-content' }} />
         </Card>
       )}
       <Modal title="添加自选股持仓" open={open} onOk={onSubmit} onCancel={() => setOpen(false)} okText="保存">

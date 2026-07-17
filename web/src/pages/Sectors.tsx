@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
-import { Card, Table, Tag, Spin, Empty, DatePicker, Space, Alert } from 'antd';
+import { Card, Table, Tag, DatePicker, Space, Alert } from 'antd';
 import { Sector, apiGet, errMsg } from '../api/client';
-import { EChart, AXIS_STYLE, baseGrid, EChartsOption } from '../components/charts';
+import { EChart, catAxis, valAxis, baseGrid, tooltipStyle, EChartsOption } from '../components/charts';
 import { COLORS } from '../theme';
+import { PageHeader, PageLoading, EmptyHint } from '../components/common';
 import dayjs from 'dayjs';
 
 function fmtPct(v: number | null | undefined) {
@@ -28,7 +29,7 @@ export default function Sectors() {
       .finally(() => setLoading(false));
   }, [date]);
 
-  if (loading) return <div className="page"><Spin /></div>;
+  if (loading) return <PageLoading tip="正在加载板块轮动…" />;
 
   const columns = [
     { title: '板块', dataIndex: 'sector_name' },
@@ -41,37 +42,39 @@ export default function Sectors() {
 
   const option: EChartsOption = {
     grid: baseGrid,
-    tooltip: { trigger: 'axis' },
-    legend: { data: ['涨跌幅', 'RS'], textStyle: { color: 'rgba(255,255,255,0.65)' } },
-    xAxis: { type: 'category', data: data.map((s) => s.sector_name), ...AXIS_STYLE, axisLabel: { rotate: 30, color: 'rgba(255,255,255,0.65)' } },
-    yAxis: [
-      { type: 'value', name: '涨跌幅%', ...AXIS_STYLE },
-      { type: 'value', name: 'RS', ...AXIS_STYLE },
-    ],
+    tooltip: { trigger: 'axis', ...tooltipStyle },
+    legend: { data: ['涨跌幅', 'RS'], top: 8, textStyle: { color: COLORS.axisLabel } },
+    xAxis: catAxis(data.map((s) => s.sector_name), 30),
+    yAxis: [valAxis('涨跌幅%'), valAxis('RS')],
     series: [
       { name: '涨跌幅', type: 'bar', data: data.map((s) => +(s.change_pct == null ? 0 : (s.change_pct * 100).toFixed(2))), itemStyle: { color: COLORS.factor } },
-      { name: 'RS', type: 'line', yAxisIndex: 1, data: data.map((s) => +(s.rs == null ? 0 : s.rs.toFixed(4))), itemStyle: { color: COLORS.predict } },
+      { name: 'RS', type: 'line', yAxisIndex: 1, data: data.map((s) => +(s.rs == null ? 0 : s.rs.toFixed(4))), itemStyle: { color: COLORS.predict }, smooth: true },
     ],
   };
 
   return (
     <div className="page">
+      <PageHeader title="板块轮动" subtitle="涨跌幅 · RS · 资金净流入 · 轮动信号" />
       {error && (
         <Alert style={{ marginBottom: 16 }} type="error" showIcon message="板块数据加载失败" description={error} />
       )}
       <Space style={{ marginBottom: 16 }}>
         <span>日期</span>
-        <DatePicker onChange={(_, s) => setDate((Array.isArray(s) ? s[0] : s) || '')} defaultValue={date ? dayjs(date) : undefined} />
+        <DatePicker
+          value={date ? dayjs(date) : null}
+          onChange={(_, s) => setDate((Array.isArray(s) ? s[0] : s) || '')}
+          allowClear
+        />
       </Space>
       {data.length === 0 ? (
-        <Empty description="暂无板块数据" />
+        <EmptyHint description="暂无板块数据" />
       ) : (
         <>
           <Card title="板块轮动" className="metric-card" style={{ marginBottom: 16 }}>
             <EChart option={option} height={340} />
           </Card>
           <Card title="板块强弱排名">
-            <Table size="small" rowKey="sector_code" columns={columns} dataSource={data} pagination={false} />
+            <Table size="small" rowKey="sector_code" columns={columns} dataSource={data} pagination={false} scroll={{ x: 'max-content' }} />
           </Card>
         </>
       )}
