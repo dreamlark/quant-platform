@@ -395,7 +395,7 @@ class Repository:
             "hotspot_digest", "SELECT * FROM hotspot_digest ORDER BY date DESC LIMIT 30"
         )
 
-def load_sentiment_index_before(self, target_date: dt.date) -> pd.DataFrame:
+    def load_sentiment_index_before(self, target_date: dt.date) -> pd.DataFrame:
         """读取严格早于 target_date 的最新一条市场情绪指数（point-in-time T-1）。
 
         供融合层 regime 调节使用：当日情绪指数在 step_market_sentiment 之后才落库，

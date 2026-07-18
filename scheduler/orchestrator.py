@@ -265,10 +265,6 @@ class Orchestrator:
     def step_fusion(self, date: dt.date) -> pd.DataFrame:
         uni = self.repo.load_universe(date, in_universe=True)
         codes = uni["code"].tolist()
-<<<<<<< HEAD
-        # regime 调节：使用严格 T-1 的市场情绪 regime（point-in-time 正确——
-        # 当日情绪指数在 step_market_sentiment 之后才落库，不能用于当日信号；
-        # 即便当天已跑过 market_sentiment 再重跑 fusion，也只取 date < 当日 的 T-1）。
         # regime 调节：使用严格 T-1 的市场情绪 regime（point-in-time 正确——
         # 当日情绪指数在 step_market_sentiment 之后才落库，不能用于当日信号；
         # 即便当天已跑过 market_sentiment 再重跑 fusion，也只取 date < 当日 的 T-1）。
