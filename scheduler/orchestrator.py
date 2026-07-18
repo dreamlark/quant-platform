@@ -21,6 +21,8 @@ from factors.sentiment import SentimentExtractor
 from factors.market_sentiment import MarketSentiment
 from factors.text_sentiment import TextSentiment
 from sources.sentiment_data import fetch_all as fetch_sentiment_external
+from sources.hotspot_collector import HotspotCollector, create_collector
+from llm.hotspot_analyzer import HotspotAnalyzer, aggregate_by_code
 from fusion.sector import SectorAnalyzer
 from fusion.signal_pool import SignalPool
 from llm.brief_gen import BriefGenerator
@@ -71,6 +73,11 @@ class Orchestrator:
         self.brief_gen = BriefGenerator(self.llm, settings.get("llm", {}).get("disclaimer", ""))
         self.reviewer = StockReviewer(self.llm, settings.get("llm", {}).get("disclaimer", ""))
         self.wf = WalkForwardBacktester(settings)
+
+        # 热点语义分析子系统（H2/H3）
+        self.hotspot_collector: Optional[HotspotCollector] = None
+        self.hotspot_analyzer: Optional[HotspotAnalyzer] = None
+        self._hotspot_signals_cache: List = []
 
         # 步骤间传递（持久化同时缓存）
         self.factor_long = pd.DataFrame()
@@ -190,13 +197,88 @@ class Orchestrator:
         self.neutralized = self.neutralizer.neutralize(self.factor_long, meta)
         return self.neutralized
 
+    def step_hotspot(self, date: dt.date) -> pd.DataFrame:
+        """热点语义分析（采集 → LLM 分析 → 落库）。
+
+        盘后批量模式：
+        1. 重置去重缓存
+        2. 采集当日全部热点文本
+        3. LLM 批量分析（结构化 JSON 输出）
+        4. 落库 hotspot_signals + hotspot_digest
+        """
+        if self.hotspot_collector is None:
+            self.hotspot_collector = create_collector(
+                stock_codes=self.codes[:50],  # 个股源仅遍历 top 50 控制调用量
+                enable_stock_news=bool(self.codes),
+                cache_dir=self.settings.get("paths", {}).get("hotspot_cache", "./data/hotspot_cache"),
+            )
+        if self.hotspot_analyzer is None:
+            # 构造股票池 {code: name}
+            stock_pool = {}
+            if self.stock_list is not None:
+                for _, row in self.stock_list.iterrows():
+                    code = str(row.get("code", "")).split(".")[0]
+                    name = str(row.get("name", ""))
+                    if code:
+                        stock_pool[code] = name
+            self.hotspot_analyzer = HotspotAnalyzer(
+                llm=self.llm,
+                stock_pool=stock_pool,
+                batch_size=int(self.settings.get("hotspot", {}).get("batch_size", 8)),
+                max_tokens=int(self.settings.get("hotspot", {}).get("max_tokens", 4096)),
+            )
+
+        # 1. 重置去重 + 采集
+        self.hotspot_collector.reset_dedup()
+        items = self.hotspot_collector.collect_batch(date)
+        if not items:
+            logger.info(f"热点分析 {date}：无新增热点文本")
+            return pd.DataFrame()
+
+        # 2. LLM 批量分析
+        signals = self.hotspot_analyzer.analyze_batch(items)
+        if not signals:
+            logger.info(f"热点分析 {date}：LLM 未产出信号")
+            return pd.DataFrame()
+
+        # 3. 落库 hotspot_signals
+        sig_df = pd.DataFrame([s.to_dict() for s in signals])
+        sig_df["ts"] = pd.to_datetime(sig_df["ts"])
+        self.repo.save_hotspot_signals(sig_df)
+
+        # 4. 生成并落库热点摘要
+        positive = sum(1 for s in signals if s.sentiment == "利好")
+        negative = sum(1 for s in signals if s.sentiment == "利空")
+        neutral = len(signals) - positive - negative
+        digest = self.hotspot_analyzer.generate_digest(signals, date_str=date.isoformat())
+        self.repo.save_hotspot_digest(date, digest, len(signals), positive, negative, neutral)
+
+        # 5. 缓存信号供 step_fusion 使用
+        self._hotspot_signals_cache = signals
+
+        logger.info(
+            f"热点分析 {date}：{len(items)} 条文本 → {len(signals)} 个信号"
+            f"（利好 {positive} / 利空 {negative} / 中性 {neutral}）"
+        )
+        return sig_df
+
     def step_fusion(self, date: dt.date) -> pd.DataFrame:
         uni = self.repo.load_universe(date, in_universe=True)
         codes = uni["code"].tolist()
+<<<<<<< HEAD
+        # regime 调节：使用严格 T-1 的市场情绪 regime（point-in-time 正确——
+        # 当日情绪指数在 step_market_sentiment 之后才落库，不能用于当日信号；
+        # 即便当天已跑过 market_sentiment 再重跑 fusion，也只取 date < 当日 的 T-1）。
         # regime 调节：使用严格 T-1 的市场情绪 regime（point-in-time 正确——
         # 当日情绪指数在 step_market_sentiment 之后才落库，不能用于当日信号；
         # 即便当天已跑过 market_sentiment 再重跑 fusion，也只取 date < 当日 的 T-1）。
         regime = self._latest_regime(date)
+        # 热点情绪增强：从缓存的热点信号中聚合个股级得分
+        hotspot_scores = None
+        if self._hotspot_signals_cache:
+            hotspot_scores = aggregate_by_code(
+                self._hotspot_signals_cache, date=date
+            )
         signals = self.signal_pool.fuse(
             self.neutralized,
             self.tech_df,
@@ -207,6 +289,7 @@ class Orchestrator:
             date,
             codes,
             regime=regime,
+            hotspot_scores=hotspot_scores,
         )
         self.repo.save_signals(signals)
         return signals
@@ -409,6 +492,7 @@ class Orchestrator:
             rs.step("predict", self.step_predict, target_date)
             rs.step("health", self.step_health, target_date)
             rs.step("neutralize", self.step_neutralize, target_date)
+            rs.step("hotspot", self.step_hotspot, target_date)
             signals = rs.step("fusion", self.step_fusion, target_date)
             rs.step("sector", self.step_sector, target_date)
             rs.step("market_sentiment", self.step_market_sentiment, target_date)

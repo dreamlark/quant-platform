@@ -3,8 +3,9 @@ body,
 #root {
   height: 100%;
   margin: 0;
-  background: var(--app-color-bg-base, #141414);
-  color: rgba(255, 255, 255, 0.85);
+  background: var(--bg-base, var(--app-color-bg-base, #141414));
+  color: var(--text-primary, rgba(255, 255, 255, 0.85));
+  transition: background-color 0.3s ease, color 0.3s ease;
 }
 
 .app-logo {
@@ -23,8 +24,8 @@ body,
   font-size: 12px;
   color: var(--app-color-warning, #faad14);
   padding: 4px 16px;
-  background: rgba(250, 173, 20, 0.08);
-  border-bottom: 1px solid rgba(250, 173, 20, 0.2);
+  background: var(--disclaimer-bg, rgba(250, 173, 20, 0.08));
+  border-bottom: 1px solid var(--disclaimer-border, rgba(250, 173, 20, 0.2));
 }
 
 .page {
@@ -33,4 +34,25 @@ body,
 
 .metric-card {
   margin-bottom: 16px;
+}
+
+/* 亮色主题调整 */
+body[data-theme="light"] .app-logo {
+  color: #333;
+}
+
+/* 滚动条样式 */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(128, 128, 128, 0.3);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(128, 128, 128, 0.5);
 }
