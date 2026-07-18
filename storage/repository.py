@@ -330,7 +330,72 @@ class Repository:
             )
         return self._read("sentiment_index", "SELECT * FROM sentiment_index ORDER BY date")
 
-    def load_sentiment_index_before(self, target_date: dt.date) -> pd.DataFrame:
+    # ===== 热点信号 hotspot_signals =====
+    def save_hotspot_signals(self, df: pd.DataFrame) -> int:
+        """落库热点信号（按 ts+source+title upsert）。"""
+        return self._upsert("hotspot_signals", df, ["ts", "source", "title"])
+
+    def load_hotspot_signals(
+        self,
+        date: Optional[dt.date] = None,
+        code: Optional[str] = None,
+        sector: Optional[str] = None,
+        limit: int = 100,
+    ) -> pd.DataFrame:
+        """查询热点信号。"""
+        sql = "SELECT * FROM hotspot_signals WHERE 1=1"
+        params: List = []
+        if date:
+            sql += " AND CAST(ts AS DATE) = ?"
+            params.append(date)
+        if code:
+            sql += " AND related_codes LIKE ?"
+            params.append(f"%{code}%")
+        if sector:
+            sql += " AND related_sectors LIKE ?"
+            params.append(f"%{sector}%")
+        sql += " ORDER BY ts DESC LIMIT ?"
+        params.append(limit)
+        return self._read("hotspot_signals", sql, params)
+
+    def load_hotspot_by_date(self, date: dt.date) -> pd.DataFrame:
+        """加载指定日期全部热点信号。"""
+        return self.load_hotspot_signals(date=date, limit=10000)
+
+    # ===== 热点摘要 hotspot_digest =====
+    def save_hotspot_digest(
+        self,
+        date: dt.date,
+        content: str,
+        total_count: int,
+        positive: int,
+        negative: int,
+        neutral: int,
+    ) -> int:
+        df = pd.DataFrame(
+            [
+                {
+                    "date": date,
+                    "content": content,
+                    "total_count": int(total_count),
+                    "positive": int(positive),
+                    "negative": int(negative),
+                    "neutral": int(neutral),
+                }
+            ]
+        )
+        return self._upsert("hotspot_digest", df, ["date"])
+
+    def load_hotspot_digest(self, date: Optional[dt.date] = None) -> pd.DataFrame:
+        if date:
+            return self._read(
+                "hotspot_digest", "SELECT * FROM hotspot_digest WHERE date = ?", [date]
+            )
+        return self._read(
+            "hotspot_digest", "SELECT * FROM hotspot_digest ORDER BY date DESC LIMIT 30"
+        )
+
+def load_sentiment_index_before(self, target_date: dt.date) -> pd.DataFrame:
         """读取严格早于 target_date 的最新一条市场情绪指数（point-in-time T-1）。
 
         供融合层 regime 调节使用：当日情绪指数在 step_market_sentiment 之后才落库，

@@ -184,6 +184,35 @@ TABLE_DDL: Dict[str, str] = {
             PRIMARY KEY (date)
         );
     """,
+    "hotspot_signals": """
+        CREATE TABLE IF NOT EXISTS hotspot_signals (
+            ts              TIMESTAMP,     -- 热点时间戳
+            source          VARCHAR,       -- 数据来源
+            title           VARCHAR,       -- 原始标题
+            topic           VARCHAR,       -- LLM 提取主题
+            sentiment       VARCHAR,       -- 利好/利空/中性
+            sentiment_score DOUBLE,        -- [-1, 1]
+            impact          VARCHAR,       -- 高/中/低
+            impact_score    DOUBLE,        -- [0, 1]
+            related_sectors VARCHAR,       -- 关联板块（逗号分隔）
+            related_codes   VARCHAR,       -- 关联股票（逗号分隔）
+            reasoning       VARCHAR,       -- 判断依据
+            composite_score DOUBLE,        -- 复合信号分值 = sentiment_score × impact_score
+            created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (ts, source, title)
+        );
+    """,
+    "hotspot_digest": """
+        CREATE TABLE IF NOT EXISTS hotspot_digest (
+            date        DATE,
+            content     VARCHAR,       -- 热点语义摘要（Markdown）
+            total_count INT,            -- 热点总数
+            positive    INT,            -- 利好数
+            negative    INT,            -- 利空数
+            neutral     INT,            -- 中性数
+            PRIMARY KEY (date)
+        );
+    """,
 }
 
 # 表写入顺序（外键无强制约束，仅作落库/初始化顺序参考）
@@ -201,6 +230,8 @@ TABLE_ORDER: List[str] = [
     "stock_review",
     "backtest_report",
     "sentiment_index",
+    "hotspot_signals",
+    "hotspot_digest",
 ]
 
 

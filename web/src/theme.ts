@@ -43,7 +43,55 @@ export const darkTheme: ThemeConfig = {
   },
 };
 
-// 金融语义色（A 股：红涨 / 绿跌）
+// 亮色主题
+export const lightTheme: ThemeConfig = {
+  algorithm: antdTheme.defaultAlgorithm,
+  token: {
+    colorPrimary: '#1677ff',
+    colorBgBase: '#ffffff',
+    borderRadius: 8,
+    fontSize: 14,
+  },
+};
+
+// 紧凑暗色主题
+export const compactDarkTheme: ThemeConfig = {
+  algorithm: [antdTheme.darkAlgorithm, antdTheme.compactAlgorithm],
+  token: {
+    colorPrimary: '#177ddc',
+    colorBgBase: '#0e1116',
+    borderRadius: 6,
+    fontSize: 13,
+  },
+};
+
+// 科技蓝主题（暗色底 + 蓝色调）
+export const techBlueTheme: ThemeConfig = {
+  algorithm: antdTheme.darkAlgorithm,
+  token: {
+    colorPrimary: '#00d4ff',
+    colorBgBase: '#0a0e27',
+    colorBgContainer: '#111634',
+    colorBgElevated: '#1a1f4a',
+    borderRadius: 10,
+    fontSize: 14,
+    colorTextBase: '#e0e6ff',
+  },
+};
+
+export type ThemeMode = 'dark' | 'light' | 'compact' | 'techblue';
+
+export const themeMap: Record<ThemeMode, ThemeConfig> = {
+  dark: darkTheme,
+  light: lightTheme,
+  compact: compactDarkTheme,
+  techblue: techBlueTheme,
+};
+
+export function getTheme(mode: ThemeMode): ThemeConfig {
+  return themeMap[mode] || darkTheme;
+}
+
 export const COLORS = {
   up: '#cf1322', // 涨（红）
   down: '#3f8600', // 跌（绿）
@@ -64,3 +112,35 @@ export function tempColor(v: number | null | undefined): string {
   if (v >= 25) return '#eab308';
   return COLORS.down;
 }
+
+// 各主题对应的 CSS 变量（供 index.css / App.tsx 注入）
+export const themeCSSVars: Record<ThemeMode, Record<string, string>> = {
+  dark: {
+    '--bg-base': '#0e1116',
+    '--text-primary': 'rgba(255,255,255,0.88)',
+    '--text-secondary': 'rgba(255,255,255,0.45)',
+    '--disclaimer-bg': 'rgba(250,173,20,0.08)',
+    '--disclaimer-border': 'rgba(250,173,20,0.18)',
+  },
+  light: {
+    '--bg-base': '#f0f2f5',
+    '--text-primary': 'rgba(0,0,0,0.88)',
+    '--text-secondary': 'rgba(0,0,0,0.45)',
+    '--disclaimer-bg': 'rgba(250,173,20,0.06)',
+    '--disclaimer-border': 'rgba(250,173,20,0.15)',
+  },
+  compact: {
+    '--bg-base': '#0e1116',
+    '--text-primary': 'rgba(255,255,255,0.88)',
+    '--text-secondary': 'rgba(255,255,255,0.45)',
+    '--disclaimer-bg': 'rgba(250,173,20,0.08)',
+    '--disclaimer-border': 'rgba(250,173,20,0.18)',
+  },
+  techblue: {
+    '--bg-base': '#0a0e27',
+    '--text-primary': '#e0e6ff',
+    '--text-secondary': 'rgba(224,230,255,0.45)',
+    '--disclaimer-bg': 'rgba(0,212,255,0.08)',
+    '--disclaimer-border': 'rgba(0,212,255,0.2)',
+  },
+};
