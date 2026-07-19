@@ -71,9 +71,9 @@ body,
 /* 页面容器 */
 .page {
   padding: 20px;
-  /* 侧边栏折叠后 Sider 宽度仅 80px（含 trigger），
-     内容区需预留空间避免被汉堡按钮(≡)遮挡 */
-  padding-left: max(20px, calc(80px + 8px));
+  /* 侧边栏折叠后 Sider 宽度 48px（collapsedWidth=48），
+     内容区需预留空间避免被收起按钮(≡)遮挡 */
+  padding-left: max(20px, calc(48px + 8px));
 }
 
 /* 侧边栏展开时（>lg 断点约 992px），内容区正常内边距 */
@@ -81,6 +81,11 @@ body,
   .page {
     padding-left: 20px;
   }
+}
+
+/* 折叠后的侧边栏：trigger 按钮居中显示在 48px 窄条内 */
+.ant-layout-sider-collapsed .ant-layout-sider-trigger {
+  width: 48px !important;
 }
 
 /* 统一页头 */

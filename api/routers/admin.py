@@ -278,7 +278,7 @@ class UpdateManager:
             pass
 
     # -------- 自动调度（内嵌 BackgroundScheduler，Web 开关控制）--------
-    def start_auto(self) -> None:
+    def start_auto(self, hour: int = 18, minute: int = 30) -> None:
         if self._scheduler is not None and self._scheduler.running:
             return
         from apscheduler.schedulers.background import BackgroundScheduler
@@ -286,16 +286,17 @@ class UpdateManager:
 
         settings = load_settings()
         sched_cfg = settings.get("scheduler", {})
-        cron = sched_cfg.get("cron", "30 18 * * 1-5")
         tz = sched_cfg.get("timezone", "Asia/Shanghai")
-        minute, hour, _, _, dow = (cron.split() + ["*", "*", "*", "*", "*"])[:5]
+        # 优先使用用户传入的时间，否则回退配置文件
+        self._auto_hour = hour
+        self._auto_minute = minute
         self._scheduler = BackgroundScheduler(timezone=tz)
         self._scheduler.add_job(
             lambda: self.trigger("auto"),
             CronTrigger(
-                minute=int(minute),
-                hour=int(hour),
-                day_of_week=(dow if dow != "*" else None),
+                minute=self._auto_minute,
+                hour=self._auto_hour,
+                day_of_week="1-5",  # 工作日
             ),
             id="auto_update",
             max_instances=1,
@@ -339,10 +340,18 @@ def logs():
 
 
 @router.post("/auto/start")
-def auto_start(_: None = Depends(require_admin)):
-    """启动 Web 可控的自动运行（工作日 18:30 自动更新）。"""
-    mgr.start_auto()
-    return {"auto_enabled": True, "next_run": mgr.state["next_run"]}
+def auto_start(
+    hour: int = 18,
+    minute: int = 30,
+    _: None = Depends(require_admin),
+):
+    """启动 Web 可控的自动运行（工作日指定时间自动更新，默认 18:30）。"""
+    mgr.start_auto(hour=hour, minute=minute)
+    return {
+        "auto_enabled": True,
+        "next_run": mgr.state["next_run"],
+        "schedule_time": f"{hour:02d}:{minute:02d}",
+    }
 
 
 @router.post("/auto/stop")

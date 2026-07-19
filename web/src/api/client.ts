@@ -140,9 +140,18 @@ export interface RunLog {
   message: string;
 }
 
-// 开启 Web 可控的自动运行（工作日 18:30 自动更新）
-export function startAuto() {
-  return api.post<{ auto_enabled: boolean; next_run: string | null }>('/admin/auto/start');
+// 开启 Web 可控的自动运行（工作日指定时间自动更新，默认 18:30）
+interface AutoStartResult {
+  auto_enabled: boolean;
+  next_run: string | null;
+  schedule_time: string;
+}
+export function startAuto(hour?: number, minute?: number) {
+  const params = new URLSearchParams();
+  if (hour != null) params.append('hour', String(hour));
+  if (minute != null) params.append('minute', String(minute));
+  const qs = params.toString() ? `?${params}` : '';
+  return api.post<AutoStartResult>(`/admin/auto/start${qs}`);
 }
 
 // 关闭自动运行

@@ -89,7 +89,7 @@ export default function App() {
   return (
     <ConfigProvider theme={currentTheme}>
       <Layout style={{ minHeight: '100vh' }}>
-        <Sider theme={themeMode === 'light' ? 'light' : 'dark'} breakpoint="lg" collapsedWidth={0} collapsible>
+        <Sider theme={themeMode === 'light' ? 'light' : 'dark'} breakpoint="lg" collapsedWidth={48} collapsible>
           <div className="app-logo">
             <span className="logo-mark"><FundOutlined /></span>
             <span>量化分析平台</span>

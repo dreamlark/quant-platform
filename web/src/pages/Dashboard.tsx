@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
 import {
   Card, Col, Row, Table, Typography, Tag, Statistic, Empty,
-  Button, Switch, Space, Progress, Alert, Tooltip, Popconfirm,
+  Button, Switch, Space, Progress, Alert, Tooltip, Popconfirm, TimePicker,
 } from 'antd';
+import dayjs from 'dayjs';
 import {
   DashboardSummary, Sector, UpdateStatus,
   triggerUpdate, getUpdateStatus, startAuto, stopAuto,
@@ -25,6 +26,12 @@ export default function Dashboard() {
   const [hint, setHint] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [statusError, setStatusError] = useState<string | null>(null);
+
+  // 自动运行时间（用户可配置，持久化到 localStorage）
+  const [autoTime, setAutoTime] = useState(() => {
+    const saved = localStorage.getItem('auto-schedule-time');
+    return saved ? dayjs(saved, 'HH:mm') : dayjs('18:30', 'HH:mm');
+  });
 
   const fetchStatus = () =>
     getUpdateStatus()
@@ -101,8 +108,11 @@ export default function Dashboard() {
     setHint(null);
     try {
       if (checked) {
-        await startAuto();
-        setHint('已开启自动运行（工作日 18:30 自动更新）');
+        const h = autoTime.hour();
+        const m = autoTime.minute();
+        localStorage.setItem('auto-schedule-time', autoTime.format('HH:mm'));
+        await startAuto(h, m);
+        setHint(`已开启自动运行（工作日 ${autoTime.format('HH:mm')} 自动更新）`);
       } else {
         await stopAuto();
         setHint('已关闭自动运行');
@@ -224,6 +234,20 @@ export default function Dashboard() {
                 checked={status?.auto_enabled || false}
                 loading={autoBusy}
                 onChange={handleAutoToggle}
+              />
+              <TimePicker
+                value={autoTime}
+                format="HH:mm"
+                minuteStep={5}
+                size="small"
+                style={{ width: 100 }}
+                onChange={(v) => {
+                  if (v) {
+                    setAutoTime(v);
+                    localStorage.setItem('auto-schedule-time', v.format('HH:mm'));
+                  }
+                }}
+                disabled={status?.auto_enabled || false}
               />
             </Space>
           </Col>

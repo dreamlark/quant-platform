@@ -46,6 +46,9 @@ export default function Monitor() {
   const [autoScroll, setAutoScroll] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  // ⚠️ 所有 hooks 必须在条件返回之前声明（React 规则）
+  const logRef = useRef<HTMLDivElement>(null);
+
   const loadOverview = () =>
     getMonitorOverview()
       .then((r) => setOv(r.data))
@@ -75,6 +78,13 @@ export default function Monitor() {
       clearInterval(t3);
     };
   }, []);
+
+  // 日志自动滚动（hooks 必须在条件返回前）
+  useEffect(() => {
+    if (autoScroll && logRef.current) {
+      logRef.current.scrollTop = logRef.current.scrollHeight;
+    }
+  }, [logs, autoScroll]);
 
   if (loading) return <PageLoading tip="正在加载运维总览…" />;
 
@@ -262,13 +272,6 @@ export default function Monitor() {
   );
 
   // —— 实时运行日志面板 ——
-  const logRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (autoScroll && logRef.current) {
-      logRef.current.scrollTop = logRef.current.scrollHeight;
-    }
-  }, [logs, autoScroll]);
-
   const LEVEL_COLOR: Record<string, string> = {
     info: '#8c8c8c',
     success: '#52c41a',
