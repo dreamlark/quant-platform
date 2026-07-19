@@ -118,6 +118,24 @@ def test_either_input_empty_returns_empty():
     assert ret_df.empty and metrics == {} and rows.empty
 
 
+def test_timing_zero_exposure_has_no_market_risk(env):
+    """经济含义（§四.8）：信号全为空仓（暴露=0）时，择时组合无市场风险，
+    其收益波动应显著低于满仓基线——验证「择时能降低回撤/风险」这一结论。
+    """
+    bars, fl, uni, _ = env
+    all_empty = pd.DataFrame({"date": bars["date"].unique(), "signal": "空仓"})
+    bt = SentimentTimingBacktester({})
+    ret_df, metrics, _ = bt.run(bars, fl, uni, all_empty)
+    timing_vol = ret_df["port_ret"].std()
+    base_vol = ret_df["base_ret"].std()
+    # 零暴露组合不参与市场，波动应远低于满仓基线（构建上保证，非随机侥幸）
+    assert timing_vol < base_vol * 0.5, (
+        f"零暴露择时组合波动应显著低于满仓基线：timing_vol={timing_vol:.6f} "
+        f"base_vol={base_vol:.6f}"
+    )
+    assert np.isfinite(metrics["timing_max_drawdown"])
+
+
 if __name__ == "__main__":
     bars = _bars()
     fl = _factor_long(bars)

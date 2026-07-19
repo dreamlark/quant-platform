@@ -129,14 +129,19 @@ def _watchlist_alerts(repo: Repository, target, watch_codes) -> list[WatchOut]:
     out = []
     if not watch_codes:
         return out
+    # 循环外取一次自选股表，转 dict 供 O(1) 查表，避免每只股票全表扫描（N+1）
+    watch_df = repo.list_watch()
+    watch_map = (
+        {str(r["code"]): r for _, r in watch_df.iterrows()}
+        if not watch_df.empty
+        else {}
+    )
     bars = repo.load_bars(codes=watch_codes, start=target, end=target)
     sig = repo.load_signals(target)
     for code in watch_codes:
-        w = repo.list_watch()
-        row = w[w["code"] == code]
-        if row.empty:
+        if code not in watch_map:
             continue
-        r = row.iloc[0]
+        r = watch_map[code]
         cur = bars[bars["code"] == code]["close"]
         price = float(cur.iloc[0]) if not cur.empty else None
         srow = sig[sig["code"] == code]

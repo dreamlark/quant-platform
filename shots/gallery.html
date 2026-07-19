@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>quant-platform UI 截图预览</title>
+    <style>
+      body {
+        margin: 0; padding: 20px;
+        background: #0e1116; color: rgba(255,255,255,0.88);
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', sans-serif;
+      }
+      h1 { font-size: 22px; margin-bottom: 4px; }
+      .sub { color: rgba(255,255,255,0.5); margin-bottom: 24px; font-size: 13px; }
+      .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(420px, 1fr)); gap: 16px; }
+      figure { margin: 0; break-inside: avoid; }
+      figcaption { text-align: center; font-size: 13px; margin-top: 6px; color: rgba(255,255,255,0.55); }
+      img { width: 100%; border-radius: 8px; border: 1px solid rgba(255,255,255,0.08); box-shadow: 0 2px 12px rgba(0,0,0,.35); }
+    </style>
+  </head>
+  <body>
+    <h1>🎨 quant-platform UI 优化后截图</h1>
+    <p class="sub">基于最新代码（3138bd6）重做 · 暗色三级明度 · 品牌 Header · 响应式 · 骨架屏 · 路由懒加载 · 共享组件</p>
+    <div class="grid">
+      <figure><img src="dashboard.png" alt="Dashboard" /><figcaption>每日简报（桌面 1440×1700）</figcaption></figure>
+      <figure><img src="factors.png" alt="Factors" /><figcaption>因子健康度（桌面）</figcaption></figure>
+      <figure><img src="sectors.png" alt="Sectors" /><figcaption>板块轮动（桌面）</figcaption></figure>
+      <figure><img src="stocks.png" alt="Stocks" /><figcaption>股票信号拆解 /600519（桌面）</figcaption></figure>
+      <figure><img src="watchlist.png" alt="Watchlist" /><figcaption>自选股记账持仓（桌面）</figcaption></figure>
+      <figure><img src="monitor.png" alt="Monitor" /><figcaption>运维监控总览（桌面）</figcaption></figure>
+      <figure><img src="mobile_dashboard.png" alt="Mobile Dashboard" /><figcaption>每日简报（移动端 390×1900）· 响应式堆叠</figcaption></figure>
+    </div>
+  </body>
+</html>

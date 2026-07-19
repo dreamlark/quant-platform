@@ -15,6 +15,7 @@ import os
 import sys
 
 import pandas as pd
+import pytest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
@@ -133,6 +134,10 @@ def main() -> int:
     # 自选股
     check("/api/watchlist")
     check("/api/watchlist/600519.SH/review")
+    # 运维监控（验证 monitor 改走仓储层后的聚合端点仍正常，§四.3）
+    check("/api/monitor/overview")
+    check("/api/monitor/batch-run")
+    check("/api/monitor/history")
 
     print("\n--- 端点数据抽样校验 ---")
     summ = c.get("/api/dashboard/summary").json()
@@ -150,6 +155,15 @@ def main() -> int:
           f"conf={sd.get('confidence')} factor_detail={len(sd.get('factor_detail', []))}")
     assert sd.get("factor_detail"), "信号拆解下钻 factor_detail 为空"
 
+    # 运维监控总览结构校验（§四.3：monitor 已统一走仓储层）
+    ov = c.get("/api/monitor/overview").json()
+    for key in ("data", "factors", "models", "freshness", "market_sentiment", "pipeline"):
+        assert key in ov, f"monitor/overview 缺少字段 {key}"
+    assert "latest_date" in ov["data"], "monitor data 应包含 latest_date"
+    print(f"  monitor: data.latest_date={ov['data'].get('latest_date')} "
+          f"factors.total={ov['factors'].get('total')} "
+          f"models={len(ov['models'])} market_sentient.available={ov['market_sentiment'].get('available')}")
+
     if failures:
         print(f"\n❌ API 集成测试失败：{len(failures)} 个端点异常")
         for f in failures:
@@ -158,6 +172,14 @@ def main() -> int:
 
     print("\n✅ API 集成测试通过：所有数据端点均能从 DuckDB 正确返回。")
     return 0
+
+
+def test_api_integration() -> None:
+    """让 pytest 收集并执行 API 全链路集成测试（修复 §三.1 假绿）。
+
+    main() 内部对失败端点返回 1，这里用断言把它转为测试失败。
+    """
+    assert main() == 0, "API 集成测试存在失败端点"
 
 
 if __name__ == "__main__":

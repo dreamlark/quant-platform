@@ -20,6 +20,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
+from api.database import get_repository  # noqa: E402
 from api.routers.admin import mgr  # noqa: E402  # 实时管线状态
 from api.run_store import load_runs, load_steps  # noqa: E402
 
@@ -30,122 +31,25 @@ STALE_DAYS = 4
 
 
 def _data_status() -> dict:
-    try:
-        from api.database import get_repository
-
-        con = get_repository().market
-        row = con.execute("SELECT max(date), count(distinct code) FROM daily_bars").fetchone()
-        latest, n_codes = row[0], row[1]
-        u = con.execute(
-            "SELECT count(*) FROM universe WHERE in_universe=TRUE AND date=(SELECT max(date) FROM universe)"
-        ).fetchone()[0]
-        days_since = (dt.date.today() - latest).days if latest else None
-        is_stale = bool(days_since is not None and days_since > STALE_DAYS)
-        return {
-            "latest_date": str(latest) if latest else None,
-            "days_since": days_since,
-            "is_stale": is_stale,
-            "stock_count": n_codes,
-            "universe_count": u,
-        }
-    except Exception as exc:  # noqa: BLE001
-        return {"error": f"{type(exc).__name__}: {exc}"}
+    # 统一走仓储层（P2-1 边界治理），不再直连 DuckDB 拼 SQL
+    return get_repository().data_freshness(stale_days=STALE_DAYS)
 
 
 def _factor_health() -> dict:
-    try:
-        from api.database import get_repository
-
-        con = get_repository().analytics
-        d = con.execute("SELECT max(date) FROM factor_health").fetchone()[0]
-        if not d:
-            return {"latest_date": None, "total": 0, "by_status": {}, "avg_icir": None}
-        rows = con.execute(
-            "SELECT status, count(*) FROM factor_health WHERE date=? GROUP BY status", [d]
-        ).fetchall()
-        avg = con.execute("SELECT avg(icir) FROM factor_health WHERE date=?", [d]).fetchone()[0]
-        by_status = {s: c for s, c in rows}
-        return {
-            "latest_date": str(d),
-            "total": sum(by_status.values()),
-            "by_status": by_status,
-            "avg_icir": round(avg, 4) if avg is not None else None,
-        }
-    except Exception as exc:  # noqa: BLE001
-        return {"error": f"{type(exc).__name__}: {exc}"}
+    return get_repository().factor_health_summary()
 
 
 def _model_status() -> list:
-    try:
-        from api.database import get_repository
-
-        con = get_repository().analytics
-        ph = con.execute(
-            "SELECT model_name, max(date) FROM predict_health GROUP BY model_name"
-        ).fetchall()
-        out = []
-        for name, d in ph:
-            acc, mape = con.execute(
-                "SELECT dir_acc, mape FROM predict_health WHERE model_name=? AND date=?",
-                [name, d],
-            ).fetchone()
-            cov = con.execute(
-                "SELECT count(distinct code) FROM predict_values WHERE model_name=? AND date=?",
-                [name, d],
-            ).fetchone()[0]
-            out.append(
-                {
-                    "model_name": name,
-                    "date": str(d),
-                    "dir_acc": round(acc, 4) if acc is not None else None,
-                    "mape": round(mape, 4) if mape is not None else None,
-                    "coverage_count": cov,
-                }
-            )
-        return out
-    except Exception as exc:  # noqa: BLE001
-        return [{"error": f"{type(exc).__name__}: {exc}"}]
+    return get_repository().model_status_summary()
 
 
 def _other_freshness() -> dict:
-    try:
-        from api.database import get_repository
-
-        con = get_repository().analytics
-        sig = con.execute("SELECT max(date) FROM signals").fetchone()[0]
-        sec = con.execute("SELECT max(date) FROM sector_rotation").fetchone()[0]
-        brf = con.execute("SELECT max(date) FROM daily_brief").fetchone()[0]
-        return {
-            "signals_date": str(sig) if sig else None,
-            "sector_date": str(sec) if sec else None,
-            "brief_date": str(brf) if brf else None,
-        }
-    except Exception as exc:  # noqa: BLE001
-        return {"error": f"{type(exc).__name__}: {exc}"}
+    return get_repository().other_freshness()
 
 
 def _market_sentiment() -> dict:
-    """市场级综合情绪指数（sentiment_index 最新一行）。
-
-    复用 repo 既有 analytics 连接读取，避免与仓储读写连接冲突
-    （DuckDB 单文件单写者限制：同进程内不可同时存在 read_only 与 read_write 连接）。
-    """
-    try:
-        from api.database import get_repository
-
-        con = get_repository().analytics
-        d = con.execute("SELECT max(date) FROM sentiment_index").fetchone()[0]
-        if not d:
-            return {"latest_date": None, "available": False}
-        cur = con.execute("SELECT * FROM sentiment_index WHERE date=?", [d])
-        row = cur.fetchone()
-        cols = [c[0] for c in cur.description] if cur.description else []
-        rec = dict(zip(cols, row)) if row else {}
-        rec["latest_date"] = str(d)
-        rec["available"] = True
-        return rec
-    except Exception as exc:  # noqa: BLE001
-        return {"available": False, "error": f"{type(exc).__name__}: {exc}"}
+    """市场级综合情绪指数（sentiment_index 最新一行），统一走仓储层。"""
+    return get_repository().latest_market_sentiment()
 
 
 @router.get("/overview")

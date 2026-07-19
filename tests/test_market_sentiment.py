@@ -133,17 +133,35 @@ def test_full_external_populates_dims(env):
 
 
 def test_no_lookahead(env):
-    """compute 内部按 date 截断；传入含未来数据的 bars 也不应前视。"""
+    """compute 内部按 date 截断；传入含未来数据的 bars 也不应前视。
+
+    强化（§四.8）：与「无泄漏基线」逐值比较——点-in-time 截断（compute 入口
+    ``bars[bars['date'] <= date]`` + ``_rolling_pct`` 的 ``series.loc[:target]``）保证
+    严格晚于目标日的数据被忽略，含泄漏输入的输出必须与纯净输入完全一致。
+
+    注意：未来数据须**严格晚于**目标日（位移大于样本跨度），否则会与原始时间线
+    重叠导致该日数据加倍，从而误判为「前视」（实为重叠而非泄漏）。
+    """
     bars, target, ind = env
     future = bars.copy()
-    future["date"] = future["date"] + dt.timedelta(days=30)  # 全部移到目标日之后
+    # 位移 200 天 > 样本跨度(120天)，确保全部未来行严格晚于目标日，必被截断剔除
+    future["date"] = future["date"] + dt.timedelta(days=200)
     leak = pd.concat([bars, future], ignore_index=True)
     ms = MarketSentiment(CFG)
-    df = ms.compute(target, leak, external={}, industry_map=ind)
-    row = df.iloc[0]
-    # 仅用 <= target 的数据，结果应与无泄漏时一致（量/价维度基于同一窗口）
+    df_clean = ms.compute(target, bars, external={}, industry_map=ind)
+    df_leak = ms.compute(target, leak, external={}, industry_map=ind)
+    row = df_leak.iloc[0]
+    base = df_clean.iloc[0]
+    # 仅用 <= target 的数据，结果应与无泄漏时逐值一致
     assert row["sub_volume"] is not None
     assert row["sub_price"] is not None
+    assert row["index_value"] == pytest.approx(base["index_value"], rel=1e-9), (
+        "含未来数据的指数应与无泄漏基线逐值一致（不得前视）"
+    )
+    assert row["sub_volume"] == pytest.approx(base["sub_volume"], rel=1e-9)
+    assert row["sub_price"] == pytest.approx(base["sub_price"], rel=1e-9)
+    assert row["regime"] == base["regime"]
+    assert row["signal"] == base["signal"]
 
 
 def test_gsisi_computed(env):

@@ -18,6 +18,31 @@ export interface Signal {
   predict_contrib: number;
 }
 
+// 统一请求封装：返回 data；出错时抛出异常（不再静默吞掉），由调用方 .catch 处理
+export function apiGet<T>(url: string, config?: import('axios').AxiosRequestConfig): Promise<T> {
+  return api.get<T>(url, config).then((r) => r.data);
+}
+
+// 把未知错误收敛为可读中文文案
+export function errMsg(e: unknown): string {
+  if (axios.isAxiosError(e)) {
+    if (e.response) {
+      const data = e.response.data;
+      const detail = typeof data === 'string' ? data : JSON.stringify(data);
+      return `请求失败（${e.response.status}）：${detail}`.slice(0, 200);
+    }
+    if (e.request) return '网络异常：无法连接服务';
+    return e.message;
+  }
+  if (e instanceof Error) return e.message;
+  return '未知错误';
+}
+
+// 是否触发了「已有更新在运行」的冲突（HTTP 409）
+export function isAxiosConflict(e: unknown): boolean {
+  return axios.isAxiosError(e) && e.response?.status === 409;
+}
+
 export interface Sector {
   date: string;
   sector_code: string;
@@ -61,7 +86,7 @@ export interface SignalDetail {
   sentiment_contrib: number;
   predict_contrib: number;
   factor_detail: { factor_name: string; value: number }[];
-  predict_detail: any[];
+  predict_detail: Record<string, unknown>[];
 }
 
 export interface DashboardSummary {
@@ -244,4 +269,147 @@ export function getMonitorOverview() {
 // 运行历史记录
 export function getMonitorHistory(limit = 50) {
   return api.get<{ runs: RunRecord[] }>('/monitor/history', { params: { limit } });
+}
+
+// —— 热点语义分析 ——
+export interface HotspotItem {
+  ts: string;
+  source: string;
+  title: string;
+  topic: string;
+  sentiment: string;
+  sentiment_score: number;
+  impact: string;
+  impact_score: number;
+  related_sectors: string;
+  related_codes: string;
+  reasoning: string;
+  composite_score: number;
+}
+
+export interface HotspotDigest {
+  date: string;
+  content: string;
+  total_count: number;
+  positive: number;
+  negative: number;
+  neutral: number;
+}
+
+export function getHotspotLatest(limit = 50, date?: string) {
+  return api.get<{ items: HotspotItem[]; total: number }>('/hotspot/latest', {
+    params: { limit, ...(date ? { date } : {}) },
+  });
+}
+
+export function getHotspotByCode(code: string, days = 7) {
+  return api.get<{ items: HotspotItem[]; total: number }>(`/hotspot/by-code/${code}`, {
+    params: { days },
+  });
+}
+
+export function getHotspotDigest(date?: string) {
+  return api.get<HotspotDigest>('/hotspot/digest', {
+    params: date ? { date } : {},
+  });
+}
+
+export function getHotspotStats(days = 14) {
+  return api.get<{ daily_stats: any[]; total: number }>('/hotspot/stats', {
+    params: { days },
+  });
+}
+
+// —— 系统设置 ——
+export interface LLMSettingsView {
+  provider: string;
+  model: string;
+  base_url: string;
+  api_key_masked: string;
+  api_key_env: string;
+  temperature: number;
+  max_tokens: number;
+  cache_enabled: boolean;
+  is_configured: boolean;
+}
+
+export interface PathSettingsView {
+  data_dir: string;
+  market_db: string;
+  analytics_db: string;
+  raw_cache: string;
+}
+
+export interface SchedulerSettingsView {
+  enabled: boolean;
+  cron: string;
+  timezone: string;
+}
+
+export interface HotspotSettingsView {
+  enabled: boolean;
+  batch_size: number;
+  daemon_interval: number;
+  simhash_threshold: number;
+}
+
+export interface FusionSettingsView {
+  hotspot_alpha: number;
+  regime_adjust_enabled: boolean;
+}
+
+export interface UIPreferences {
+  theme?: string;
+  chart_up_color?: string;
+  language?: string;
+}
+
+export interface SettingsView {
+  llm: LLMSettingsView;
+  paths: PathSettingsView;
+  scheduler: SchedulerSettingsView;
+  hotspot: HotspotSettingsView;
+  fusion: FusionSettingsView;
+  ui: UIPreferences;
+  app: Record<string, any>;
+}
+
+export interface SettingsPatch {
+  llm?: Partial<LLMSettingsView & { api_key: string }>;
+  paths?: Partial<PathSettingsView>;
+  scheduler?: Partial<SchedulerSettingsView>;
+  hotspot?: Partial<HotspotSettingsView>;
+  fusion?: Partial<FusionSettingsView>;
+  ui?: Partial<UIPreferences>;
+}
+
+export interface PathInfo {
+  configured: string;
+  absolute: string;
+  exists: boolean;
+  size_mb?: number | null;
+}
+
+export function getSettings() {
+  return api.get<SettingsView>('/settings');
+}
+
+export function updateSettings(patch: SettingsPatch) {
+  return api.put<{ status: string; changed_sections: string[]; message: string }>('/settings', patch);
+}
+
+export function testLLM() {
+  return api.post<{ success: boolean; message: string; latency_ms?: number; usage?: any }>('/settings/llm/test');
+}
+
+export function getPathsInfo() {
+  return api.get<Record<string, PathInfo>>('/settings/paths/info');
+}
+
+export function migratePaths(newDataDir: string) {
+  return api.post<{ status: string; moved: any[]; new_data_dir: string; message: string }>(
+    '/settings/paths/migrate',
+    null,
+    { params: { new_data_dir: newDataDir } }
+  );
 }

@@ -106,20 +106,22 @@ class WalkForwardBacktester:
 
         dates = list(price.index)
         n = len(dates)
-        if n < self.train_window + self.test_window:
-            # 样本不足：退化为单次切分
-            self.train_window = max(20, n // 3)
-            self.test_window = n - self.train_window
+        # 样本不足时退化为单次切分（用局部变量，不修改实例属性）
+        train_w = self.train_window
+        test_w = self.test_window
+        if n < train_w + test_w:
+            train_w = max(20, n // 3)
+            test_w = n - train_w
 
         port_ret: List[Tuple[dt.date, float]] = []
         bench_ret: List[Tuple[dt.date, float]] = []
         gross_ret: List[Tuple[dt.date, float]] = []
         prev_w = None
         start = 0
-        while start + self.train_window + 1 <= n:
-            train_dates = dates[start : start + self.train_window]
+        while start + train_w + 1 <= n:
+            train_dates = dates[start : start + train_w]
             test_dates = dates[
-                start + self.train_window : start + self.train_window + self.test_window
+                start + train_w : start + train_w + test_w
             ]
             if not test_dates:
                 break
@@ -146,7 +148,10 @@ class WalkForwardBacktester:
                     )
                 ]
                 if not sel:
-                    rows.append((t, 0.0, float(r.mean())))
+                    # 候选全部被涨停约束剔除：当日全现金，组合收益 0
+                    port_ret.append((t, 0.0))
+                    bench_ret.append((t, float(r.mean())))
+                    gross_ret.append((t, 0.0))
                     prev_w = None
                     continue
                 w = pd.Series(0.0, index=alpha.index)
@@ -227,7 +232,7 @@ class WalkForwardBacktester:
                 continue
             try:
                 col = fwide[fname].loc[date]
-            except (KeyError, Exception):  # noqa: BLE001
+            except Exception:  # noqa: BLE001
                 continue
             z = (col - col.mean()) / (col.std(ddof=0) or 1.0)
             alpha = alpha.add(z.fillna(0.0) * w, fill_value=0.0)

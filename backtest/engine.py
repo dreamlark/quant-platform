@@ -36,32 +36,6 @@ def pivot_prices(bars_df: pd.DataFrame, universe_codes: Optional[List[str]] = No
     return price, fwd
 
 
-def _apply_limit(
-    w: pd.Series, limit_df: pd.DataFrame, t, cost: CostModel
-) -> pd.Series:
-    """涨跌停流动性约束：涨停买不进、跌停卖不出 → 当日剔除该侧交易。"""
-    if t not in limit_df.index:
-        return w
-    row = limit_df.loc[t]
-    out = w.copy()
-    for code, weight in w.items():
-        if code not in row.index or pd.isna(row.get(code)):
-            continue
-        pre = row[code]
-        # 用 adj_back_close 估算当日涨跌停（近似：以 pre_close 为基准）
-        # limit_df 传入的是 pre_close 宽表
-        if pre <= 0:
-            out[code] = 0.0
-            continue
-        # 仅做粗略约束：若当日 close 已涨停/跌停则无法以 close 成交
-        # 这里以 pre_close 推涨跌停价，标记不可交易侧
-        if weight > 0:  # 买入侧：涨停不可买
-            out[code] = 0.0 if False else out[code]  # 占位，具体约束在调用方用 close 判定
-        if weight < 0:  # 卖出侧：跌停不可卖
-            out[code] = 0.0 if False else out[code]
-    return out
-
-
 def long_only_weights(
     alpha_wide: pd.DataFrame, top_frac: float = 0.2
 ) -> Dict[dt.date, pd.Series]:

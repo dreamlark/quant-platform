@@ -4,7 +4,7 @@ from __future__ import annotations
 import datetime as _dt
 from typing import Annotated, List, Optional
 
-from pydantic import BaseModel, BeforeValidator
+from pydantic import BaseModel, BeforeValidator, Field
 
 # 仓库读出的 date 列通常为 datetime.date 对象，统一在序列化前转为 ISO 字符串，
 # 避免 Pydantic 对 str 字段的严格校验报错（一处修复，所有响应模型受益）。
@@ -85,8 +85,8 @@ class ReviewOut(BaseModel):
 class WatchIn(BaseModel):
     code: str
     name: str = ""
-    cost_price: float
-    shares: float
+    cost_price: float = Field(gt=0, description="成本价，必须大于 0")
+    shares: float = Field(ge=0, description="持仓数量，不可为负")
 
 
 class WatchOut(BaseModel):

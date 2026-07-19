@@ -1,63 +1,37 @@
-import React, { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
-  Card, Row, Col, Table, Typography, Tag, Spin, Statistic, Empty, Progress, Tooltip, Button, Space,
+  Card, Row, Col, Table, Typography, Tag, Statistic, Empty, Progress, Tooltip, Alert, Button, Space,
 } from 'antd';
 import {
-  api, MonitorOverview, RunRecord, DataStatus, FactorHealthSummary, ModelStatus, Freshness,
-  MarketSentimentView, RunLog,
-  getMonitorOverview, getMonitorHistory, getRunLogs,
+  MonitorOverview, DataStatus, FactorHealthSummary, ModelStatus, Freshness,
+  RunLog,
+  getMonitorOverview, getMonitorHistory, getRunLogs, errMsg,
 } from '../api/client';
-import { COLORS } from '../theme';
+import {
+  STATUS_META, FACTOR_STATUS_COLOR, BATCH_STEP_COLOR,
+} from '../constants';
+import {
+  PageHeader, PageLoading, StatusTag, SentimentCard,
+} from '../components/common';
 
-const { Title, Text } = Typography;
+const { Text } = Typography;
 
-const STATUS_META: Record<string, { color: string; label: string }> = {
-  idle: { color: 'default', label: '空闲' },
-  running: { color: 'processing', label: '更新中' },
-  success: { color: 'success', label: '成功' },
-  failed: { color: 'error', label: '失败' },
-};
-
-const FACTOR_STATUS_COLOR: Record<string, string> = {
-  有效: 'green',
-  衰减: 'gold',
-  失效: 'red',
-};
-
-const REGIME_COLOR: Record<string, string> = {
-  恐惧: 'red',
-  中性: 'default',
-  贪婪: 'green',
-};
-const REGIME_STATE_COLOR: Record<string, string> = {
-  bull: 'green',
-  neutral: 'default',
-  bear: 'orange',
-  panic: 'red',
-};
-const SIGNAL_COLOR: Record<string, string> = {
-  买入: 'green',
-  半仓: 'gold',
-  空仓: 'red',
-};
-const BATCH_STEP_COLOR: Record<string, string> = {
-  ok: 'green',
-  fail: 'red',
-};
-
-function subBar(label: string, v: number | null | undefined) {
-  if (v == null) return null;
-  return (
-    <div style={{ marginTop: 4 }}>
-      <Text type="secondary" style={{ fontSize: 12 }}>{label}：{v.toFixed(1)}</Text>
-      <Progress
-        percent={Math.round(v)}
-        size="small"
-        showInfo={false}
-        strokeColor={v >= 50 ? COLORS.up : COLORS.down}
-      />
-    </div>
-  );
+// 运行记录兼容两套 schema：手动运行(RunRecord) 与 批处理运行(BatchRunRecord)（P3-audit 修复）
+interface RunRow {
+  run_id: string;
+  trigger: string;
+  status: string;
+  started_at: string | null;
+  start_ts?: string | null;
+  target_date?: string | null;
+  date?: string | null;
+  reached_step?: string;
+  progress?: number;
+  total?: number;
+  duration_sec?: number;
+  duration_s?: number;
+  error?: string | null;
+  kind?: string;
 }
 
 function fmtPct(v: number | null | undefined) {
@@ -66,20 +40,21 @@ function fmtPct(v: number | null | undefined) {
 
 export default function Monitor() {
   const [ov, setOv] = useState<MonitorOverview | null>(null);
-  const [runs, setRuns] = useState<RunRecord[]>([]);
+  const [runs, setRuns] = useState<RunRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [logs, setLogs] = useState<RunLog[]>([]);
   const [autoScroll, setAutoScroll] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   const loadOverview = () =>
     getMonitorOverview()
       .then((r) => setOv(r.data))
-      .catch(() => {/* 观测层降级不影响页面 */})
+      .catch((e) => setError(errMsg(e)))
       .finally(() => setLoading(false));
   const loadHistory = () =>
     getMonitorHistory(50)
-      .then((r) => setRuns(r.data.runs))
-      .catch(() => {});
+      .then((r) => setRuns(r.data.runs as RunRow[]))
+      .catch((e) => setError(errMsg(e)));
 
   const loadLogs = () =>
     getRunLogs()
@@ -87,6 +62,7 @@ export default function Monitor() {
       .catch(() => {});
 
   useEffect(() => {
+    setError(null);
     loadOverview();
     loadHistory();
     loadLogs();
@@ -100,14 +76,13 @@ export default function Monitor() {
     };
   }, []);
 
-  if (loading) return <div className="page"><Spin /></div>;
+  if (loading) return <PageLoading tip="正在加载运维总览…" />;
 
   const data: DataStatus | undefined = ov?.data;
   const factors: FactorHealthSummary | undefined = ov?.factors;
   const models: ModelStatus[] = ov?.models || [];
   const fresh: Freshness | undefined = ov?.freshness;
   const pipe = ov?.pipeline;
-  const st = pipe ? STATUS_META[pipe.status] || STATUS_META.idle : STATUS_META.idle;
   const pct = pipe && pipe.total ? Math.round((pipe.progress / pipe.total) * 100) : 0;
 
   // —— 数据状态卡 ——
@@ -188,7 +163,7 @@ export default function Monitor() {
   const pipelineCard = (
     <Card className="metric-card" title="管线运行（实时）">
       <Row align="middle" gutter={[12, 8]}>
-        <Col><Tag color={st.color}>{st.label}</Tag></Col>
+        <Col><StatusTag status={pipe?.status} /></Col>
         <Col>
           {ov?.auto.enabled && ov.auto.next_run && (
             <Tooltip title="下次自动运行（Asia/Shanghai）">
@@ -203,7 +178,13 @@ export default function Monitor() {
           percent={pct}
           steps={pipe?.total || 11}
           size="small"
-          status={pipe?.status === 'failed' ? 'exception' : pipe?.status === 'success' ? 'success' : 'active'}
+          status={
+            pipe?.status === 'failed'
+              ? 'exception'
+              : pipe?.status === 'success'
+                ? 'success'
+                : 'active'
+          }
         />
       </div>
       {pipe?.current_step && pipe.status === 'running' && (
@@ -225,13 +206,11 @@ export default function Monitor() {
   );
 
   // —— 运行记录卡 ——
-  // 运行记录同时存在两套 schema：手动运行(RunRecord: started_at/duration_sec/...)
-  // 与批处理运行(BatchRunRecord: start_ts/duration_s/...)。列表需兼容两种（P3-audit 修复）。
   const runColumns = [
     {
       title: '开始', dataIndex: 'started_at',
-      render: (_: any, r: RunRecord) => {
-        const t = (r as any).started_at || (r as any).start_ts;
+      render: (_: unknown, r: RunRow) => {
+        const t = r.started_at || r.start_ts;
         return t ? t.replace('T', ' ') : '-';
       },
     },
@@ -248,19 +227,19 @@ export default function Monitor() {
     },
     {
       title: '目标日', dataIndex: 'target_date',
-      render: (_: any, r: RunRecord) => (r as any).target_date || (r as any).date || '-',
+      render: (_: unknown, r: RunRow) => r.target_date || r.date || '-',
     },
     {
       title: '到达步骤', dataIndex: 'reached_step',
-      render: (_: any, r: RunRecord) => (r as any).reached_step ?? '-',
+      render: (_: unknown, r: RunRow) => r.reached_step ?? '-',
     },
     {
       title: '进度',
-      render: (_: any, r: RunRecord) => `${(r as any).progress ?? '-'}/${(r as any).total ?? '-'}`,
+      render: (_: unknown, r: RunRow) => `${(r.progress ?? '-')}/${(r.total ?? '-')}`,
     },
     {
       title: '耗时', dataIndex: 'duration_sec',
-      render: (_: any, r: RunRecord) => `${(r as any).duration_sec ?? (r as any).duration_s ?? '-'}s`,
+      render: (_: unknown, r: RunRow) => `${(r.duration_sec ?? r.duration_s ?? '-')}s`,
     },
     {
       title: '错误', dataIndex: 'error',
@@ -277,7 +256,7 @@ export default function Monitor() {
       {runs.length === 0 ? (
         <Empty description="暂无运行记录，点「立即更新」后会出现在这里" />
       ) : (
-        <Table size="small" rowKey="run_id" pagination={false} columns={runColumns} dataSource={runs} />
+        <Table size="small" rowKey="run_id" pagination={false} columns={runColumns} dataSource={runs} scroll={{ x: 'max-content' }} />
       )}
     </Card>
   );
@@ -352,54 +331,6 @@ export default function Monitor() {
     </Card>
   );
 
-  const ms: MarketSentimentView | undefined = ov?.market_sentiment;
-  const sentimentCard = (
-    <Card className="metric-card" title="市场情绪指数（T1/T2/T3）">
-      {!ms || !ms.available ? (
-        <Text type="secondary">
-          {ms?.error ? ms.error : '暂无市场情绪数据（运行一次盘后流水线后生成）'}
-        </Text>
-      ) : (
-        <>
-          <Row gutter={16} align="middle">
-            <Col span={10}>
-              <Statistic title="综合情绪指数" value={ms.index_value ?? '-'} precision={1} />
-            </Col>
-            <Col span={14}>
-              <div>
-                <Tag color={REGIME_COLOR[ms.regime || ''] || 'default'}>{ms.regime || '-'}</Tag>
-                <Tag color={SIGNAL_COLOR[ms.signal || ''] || 'default'}>{ms.signal || '-'}</Tag>
-              </div>
-              <div style={{ marginTop: 6 }}>
-                <Text type="secondary" style={{ fontSize: 12 }}>
-                  温度计 {ms.thermometer ?? '-'} · GSISI {ms.gsisi ?? '-'}
-                </Text>
-              </div>
-              <div style={{ marginTop: 6 }}>
-                <Tag color={REGIME_STATE_COLOR[ms.regime_state || ''] || 'default'}>
-                  状态 {ms.regime_state || '-'}
-                </Tag>
-                <Text type="secondary" style={{ fontSize: 12 }}>
-                  置信缩放 ×{(ms.regime_scale ?? 1).toFixed(2)}
-                </Text>
-              </div>
-            </Col>
-          </Row>
-          <div style={{ marginTop: 8 }}>
-            {subBar('量能分', ms.sub_volume)}
-            {subBar('价格分', ms.sub_price)}
-            {subBar('资金分', ms.sub_money)}
-            {subBar('估值分', ms.sub_valuation)}
-            {subBar('风险溢价分', ms.sub_riskpremium)}
-          </div>
-          <div style={{ marginTop: 6 }}>
-            <Text type="secondary" style={{ fontSize: 12 }}>更新日 {ms.latest_date}</Text>
-          </div>
-        </>
-      )}
-    </Card>
-  );
-
   const batch = ov?.batch_run;
   const batchRunCard = (
     <Card className="metric-card" title="批处理运行健康（盘后流水线）">
@@ -434,15 +365,18 @@ export default function Monitor() {
 
   return (
     <div className="page">
-      <Title level={3}>运维监控</Title>
-      <Row gutter={16}>
-        <Col span={8}>{dataCard}</Col>
-        <Col span={8}>{factorCard}</Col>
-        <Col span={8}>{pipelineCard}</Col>
+      <PageHeader title="运维监控" subtitle="数据状态 · 健康度 · 实时管线 · 运行历史" />
+      {error && (
+        <Alert style={{ marginBottom: 16 }} type="error" showIcon message="监控数据加载失败" description={error} />
+      )}
+      <Row gutter={[16, 16]}>
+        <Col xs={24} md={8}>{dataCard}</Col>
+        <Col xs={24} md={8}>{factorCard}</Col>
+        <Col xs={24} md={8}>{pipelineCard}</Col>
       </Row>
-      <Row gutter={16} style={{ marginTop: 16 }}>
-        <Col span={14}>{modelCard}</Col>
-        <Col span={10}>
+      <Row gutter={[16, 16]}>
+        <Col xs={24} lg={14}>{modelCard}</Col>
+        <Col xs={24} lg={10}>
           <Card className="metric-card" title="其他数据新鲜度">
             <div>信号库：{fresh?.signals_date || '-'}</div>
             <div style={{ marginTop: 6 }}>板块轮动：{fresh?.sector_date || '-'}</div>
@@ -450,14 +384,14 @@ export default function Monitor() {
           </Card>
         </Col>
       </Row>
-      <Row gutter={16} style={{ marginTop: 16 }}>
-        <Col span={24}>{batchRunCard}</Col>
+      <Row gutter={[16, 16]}>
+        <Col xs={24}>{batchRunCard}</Col>
       </Row>
-      <Row gutter={16} style={{ marginTop: 16 }}>
-        <Col span={24}>{sentimentCard}</Col>
+      <Row gutter={[16, 16]}>
+        <Col xs={24}><SentimentCard data={ov?.market_sentiment} /></Col>
       </Row>
-      <Row gutter={16} style={{ marginTop: 16 }}>
-        <Col span={24}>{historyCard}</Col>
+      <Row gutter={[16, 16]}>
+        <Col xs={24}>{historyCard}</Col>
       </Row>
       <Row gutter={16} style={{ marginTop: 16 }}>
         <Col span={24}>{logPanel}</Col>

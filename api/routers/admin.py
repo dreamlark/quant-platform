@@ -11,22 +11,51 @@
 from __future__ import annotations
 
 import datetime as dt
+import hmac
 import os
 import sys
 import threading
 import time
 import uuid
+from typing import Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Header
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
-from common.config import build_repository, load_settings  # noqa: E402
+from common.config import load_settings  # noqa: E402
+from api.database import get_repository  # noqa: E402
 from api.run_store import append_run  # noqa: E402
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
+
+# 运维端点鉴权开关：仅当显式设置 ADMIN_TOKEN 时才启用，本地默认不鉴权（README §17）。
+ADMIN_TOKEN = (os.getenv("ADMIN_TOKEN") or "").strip()
+
+
+def require_admin(
+    x_admin_token: Optional[str] = Header(None, alias="X-Admin-Token"),
+    authorization: Optional[str] = Header(None),
+) -> None:
+    """运维端点鉴权依赖。
+
+    - ADMIN_TOKEN 未设置（本地默认）：放行，保持向后兼容。
+    - ADMIN_TOKEN 已设置：必须在请求头提供正确令牌，否则 401。
+      支持 ``X-Admin-Token: <token>`` 或 ``Authorization: Bearer <token>``。
+    公网部署务必设置该环境变量（README §17）。
+    """
+    if not ADMIN_TOKEN:
+        return
+    provided = x_admin_token
+    if authorization and authorization.lower().startswith("bearer "):
+        provided = authorization.split(" ", 1)[1]
+    if not provided or not hmac.compare_digest(provided, ADMIN_TOKEN):
+        raise HTTPException(
+            status_code=401,
+            detail="未授权：请提供正确的管理员令牌（X-Admin-Token 或 Authorization Bearer）",
+        )
 
 # 一轮更新的步骤（顺序固定；ingest 在最前拉最新行情）
 _STEPS = [
@@ -89,15 +118,15 @@ class UpdateManager:
         with self._log_lock:
             return list(self._logs)
 
-    # -------- 构造编排器（复用 _run_real 的 HS300 域 + akshare 逻辑）--------
+    # -------- 构造编排器（复用 API 单例 Repository，避免重复打开 DuckDB 连接）--------
     def _build_orch(self):
+        from scheduler.jobs import build_data_router
         from scheduler.orchestrator import Orchestrator
-        from sources.akshare_adapter import AkshareDailyAdapter
-        from sources.base import DataSourceRouter
         from sources.market_meta import build_market_meta
 
         settings = load_settings()
-        repo, settings = build_repository(settings)
+        # 复用 api.database 的单例 Repository，不再重复 build_repository 打开同一 DuckDB 文件
+        repo = get_repository()
 
         # 沪深300 成分（akshare，失败兜底 universe 表）
         codes, names = [], []
@@ -118,7 +147,8 @@ class UpdateManager:
 
         meta = build_market_meta(codes, names)
         stock_list = meta[["code", "name", "industry", "mv"]]
-        src = DataSourceRouter([AkshareDailyAdapter()])
+        # 多源冗余路由（mootdx→akshare→baostock，与 README / scheduler 一致）
+        src = build_data_router(settings)
         orch = Orchestrator(repo=repo, settings=settings, data_source=src, stock_list=stock_list)
         return orch, repo, stock_list
 
@@ -288,7 +318,7 @@ mgr = UpdateManager()
 
 
 @router.post("/update")
-def update():
+def update(_: None = Depends(require_admin)):
     """触发一轮数据更新与预测（异步）。已在运行时返回 409。"""
     ok = mgr.trigger()
     if not ok:
@@ -309,14 +339,14 @@ def logs():
 
 
 @router.post("/auto/start")
-def auto_start():
+def auto_start(_: None = Depends(require_admin)):
     """启动 Web 可控的自动运行（工作日 18:30 自动更新）。"""
     mgr.start_auto()
     return {"auto_enabled": True, "next_run": mgr.state["next_run"]}
 
 
 @router.post("/auto/stop")
-def auto_stop():
+def auto_stop(_: None = Depends(require_admin)):
     """停止自动运行。"""
     mgr.stop_auto()
     return {"auto_enabled": False}

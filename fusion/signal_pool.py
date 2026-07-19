@@ -68,12 +68,15 @@ class SignalPool:
         date: dt.date,
         codes: Optional[List[str]] = None,
         regime: Optional[str] = None,
+        hotspot_scores: Optional[Dict[str, float]] = None,
     ) -> pd.DataFrame:
         """融合四源，返回 ``signals`` 表（date 已固定为 ``date``）。
 
         Args:
             regime: 市场状态 regime_state（bull/neutral/bear/panic）。若 ``fusion.regime_adjust.enabled``
                 为真且 regime 在缩放表内，则仅缩放综合置信度（不动方向）。
+            hotspot_scores: 个股级热点情绪得分 {code: score ∈ [-1,1]}，
+                作为情绪源的增强维度。alpha 控制融合比例（默认 0.7 原有情绪主导）。
         """
         factor_weights = dict(
             zip(health_df["factor_name"], health_df["weight"])
@@ -93,6 +96,20 @@ class SignalPool:
         # ---- 情绪 ----
         sent = self._slice(sentiment_df, date, ["code", "sentiment_score"])
         sentiment_contrib = self._zs_col(sent, "sentiment_score")
+
+        # ---- 热点情绪增强（作为情绪源的增强维度，不改四源权重）----
+        if hotspot_scores:
+            alpha = float(self.cfg.get("fusion", {}).get("hotspot_alpha", 0.3))
+            for code in sentiment_contrib.index:
+                if code in hotspot_scores:
+                    base = sentiment_contrib.get(code, 0.0)
+                    hotspot = hotspot_scores[code]
+                    # 融合：alpha × 热点 + (1-alpha) × 原有情绪
+                    blended = alpha * hotspot + (1.0 - alpha) * base
+                    sentiment_contrib[code] = blended
+            logger.info(
+                f"热点情绪增强：{len(hotspot_scores)} 只标的，alpha={alpha:.2f}"
+            )
 
         # ---- 预测（第 4 源）----
         predict_contrib = self._predict_score(predict_df, date, pred_weights)
