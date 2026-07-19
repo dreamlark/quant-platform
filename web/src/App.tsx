@@ -7,6 +7,7 @@ import {
   LineChartOutlined,
   StarOutlined,
   MonitorOutlined,
+  DatabaseOutlined,
 } from '@ant-design/icons';
 import { Routes, Route, useNavigate, useLocation } from 'react-router-dom';
 import { darkTheme } from './theme';
@@ -16,6 +17,7 @@ import Sectors from './pages/Sectors';
 import Stocks from './pages/Stocks';
 import Watchlist from './pages/Watchlist';
 import Monitor from './pages/Monitor';
+import DataManagement from './pages/Data';
 
 const { Sider, Content, Header } = Layout;
 
@@ -29,6 +31,7 @@ const menuItems = [
   { key: '/stocks', icon: <LineChartOutlined />, label: '股票' },
   { key: '/watchlist', icon: <StarOutlined />, label: '自选股' },
   { key: '/monitor', icon: <MonitorOutlined />, label: '运维监控' },
+  { key: '/data', icon: <DatabaseOutlined />, label: '数据管理' },
 ];
 
 export default function App() {
@@ -61,6 +64,7 @@ export default function App() {
             <Route path="/stocks/:code" element={<Stocks />} />
             <Route path="/watchlist" element={<Watchlist />} />
             <Route path="/monitor" element={<Monitor />} />
+            <Route path="/data" element={<DataManagement />} />
           </Routes>
           </Content>
         </Layout>

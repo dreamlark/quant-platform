@@ -51,8 +51,16 @@ def dashboard(date: Optional[str] = Query(None)):
     watch_codes = repo.load_watch_codes()
     alerts = _watchlist_alerts(repo, target, watch_codes)
 
+    # 查询行情库最新交易日（可能与信号/简报日期不一致：ingest 可能已拉新数据但后续步骤未完成）
+    try:
+        market_row = repo.market.execute("SELECT max(date) as mdate FROM daily_bars").fetchone()
+        market_latest = str(market_row[0]) if market_row and market_row[0] else None
+    except Exception:
+        market_latest = None
+
     summary = DashboardSummary(
         date=str(target),
+        market_latest_date=market_latest,
         market_temperature=int(brief["market_temperature"].iloc[0]) if not brief.empty else 50,
         brief=brief["content"].iloc[0] if not brief.empty else None,
         top_signals=[SignalOut(**r) for _, r in top.iterrows()],

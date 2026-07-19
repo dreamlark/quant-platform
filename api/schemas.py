@@ -130,7 +130,8 @@ class MarketSentimentView(BaseModel):
 
 
 class DashboardSummary(BaseModel):
-    date: DateStr
+    date: DateStr  # 信号/简报日期（最后成功完整运行的 target）
+    market_latest_date: Optional[str] = None  # 行情库最新交易日（ingest 可能已更新但流水线未跑完）
     market_temperature: int
     brief: Optional[str] = None
     top_signals: List[SignalOut] = []

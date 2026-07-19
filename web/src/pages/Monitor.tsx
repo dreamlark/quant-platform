@@ -1,11 +1,11 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
-  Card, Row, Col, Table, Typography, Tag, Spin, Statistic, Empty, Progress, Tooltip,
+  Card, Row, Col, Table, Typography, Tag, Spin, Statistic, Empty, Progress, Tooltip, Button, Space,
 } from 'antd';
 import {
   api, MonitorOverview, RunRecord, DataStatus, FactorHealthSummary, ModelStatus, Freshness,
-  MarketSentimentView,
-  getMonitorOverview, getMonitorHistory,
+  MarketSentimentView, RunLog,
+  getMonitorOverview, getMonitorHistory, getRunLogs,
 } from '../api/client';
 import { COLORS } from '../theme';
 
@@ -68,6 +68,8 @@ export default function Monitor() {
   const [ov, setOv] = useState<MonitorOverview | null>(null);
   const [runs, setRuns] = useState<RunRecord[]>([]);
   const [loading, setLoading] = useState(true);
+  const [logs, setLogs] = useState<RunLog[]>([]);
+  const [autoScroll, setAutoScroll] = useState(true);
 
   const loadOverview = () =>
     getMonitorOverview()
@@ -79,14 +81,22 @@ export default function Monitor() {
       .then((r) => setRuns(r.data.runs))
       .catch(() => {});
 
+  const loadLogs = () =>
+    getRunLogs()
+      .then((r) => setLogs(r.data.logs || []))
+      .catch(() => {});
+
   useEffect(() => {
     loadOverview();
     loadHistory();
+    loadLogs();
     const t1 = setInterval(loadOverview, 4000);
     const t2 = setInterval(loadHistory, 8000);
+    const t3 = setInterval(loadLogs, 1500);  // 运行日志高频刷新
     return () => {
       clearInterval(t1);
       clearInterval(t2);
+      clearInterval(t3);
     };
   }, []);
 
@@ -272,6 +282,76 @@ export default function Monitor() {
     </Card>
   );
 
+  // —— 实时运行日志面板 ——
+  const logRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (autoScroll && logRef.current) {
+      logRef.current.scrollTop = logRef.current.scrollHeight;
+    }
+  }, [logs, autoScroll]);
+
+  const LEVEL_COLOR: Record<string, string> = {
+    info: '#8c8c8c',
+    success: '#52c41a',
+    warn: '#faad14',
+    error: '#ff4d4f',
+  };
+  const logPanel = (
+    <Card
+      className="metric-card"
+      title="实时运行日志"
+      extra={
+        <Space size="small">
+          <Text type="secondary" style={{ fontSize: 12 }}>
+            {logs.length > 0 ? `${logs.length} 条` : ''}
+          </Text>
+          <Button size="small" type={autoScroll ? 'primary' : 'default'} onClick={() => setAutoScroll(!autoScroll)}>
+            {autoScroll ? '自动滚动' : '已暂停'}
+          </Button>
+          <Button size="small" onClick={() => setLogs([])}>清空</Button>
+        </Space>
+      }
+    >
+      {logs.length === 0 ? (
+        <Empty description="暂无日志，点击「全量更新」后这里实时打印每步运行状态" />
+      ) : (
+        <div
+          ref={logRef}
+          style={{
+            maxHeight: 360,
+            overflowY: 'auto',
+            background: 'rgba(0,0,0,0.25)',
+            borderRadius: 6,
+            padding: '8px 12px',
+            fontFamily: 'Consolas, Monaco, "Courier New", monospace',
+            fontSize: 12,
+            lineHeight: 1.7,
+          }}
+        >
+          {logs.map((l, i) => (
+            <div key={i} style={{ display: 'flex', gap: 8, alignItems: 'baseline' }}>
+              <span style={{ color: '#666', flexShrink: 0 }}>{l.ts}</span>
+              <span
+                style={{
+                  color: LEVEL_COLOR[l.level] || '#8c8c8c',
+                  flexShrink: 0,
+                  fontWeight: l.level === 'error' || l.level === 'success' ? 600 : 400,
+                  minWidth: 48,
+                }}
+              >
+                [{l.level.toUpperCase()}]
+              </span>
+              {l.step_label && (
+                <span style={{ color: '#1890ff', flexShrink: 0 }}>{l.step_label}:</span>
+              )}
+              <span style={{ color: 'rgba(255,255,255,0.85)', wordBreak: 'break-all' }}>{l.message}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </Card>
+  );
+
   const ms: MarketSentimentView | undefined = ov?.market_sentiment;
   const sentimentCard = (
     <Card className="metric-card" title="市场情绪指数（T1/T2/T3）">
@@ -378,6 +458,9 @@ export default function Monitor() {
       </Row>
       <Row gutter={16} style={{ marginTop: 16 }}>
         <Col span={24}>{historyCard}</Col>
+      </Row>
+      <Row gutter={16} style={{ marginTop: 16 }}>
+        <Col span={24}>{logPanel}</Col>
       </Row>
     </div>
   );

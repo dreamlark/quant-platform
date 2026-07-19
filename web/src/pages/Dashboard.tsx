@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import {
   Card, Col, Row, Table, Typography, Tag, Spin, Statistic, Empty,
-  Button, Switch, Space, Progress, Alert, Tooltip,
+  Button, Switch, Space, Progress, Alert, Tooltip, Popconfirm,
 } from 'antd';
 import {
   api, DashboardSummary, Signal, Sector, WatchItem, MarketSentimentView,
@@ -87,14 +87,44 @@ export default function Dashboard() {
     setHint(null);
     try {
       await triggerUpdate();
-      setHint('已触发数据更新，进度见下方状态条');
+      setHint('已触发全量数据更新（12步流水线），进度见下方');
       fetchStatus();
     } catch (e: any) {
       if (e?.response?.status === 409) {
-        setHint('已有更新任务在运行中，请稍候');
+        setHint('已有更新任务在运行中，可点击「终止」取消');
         fetchStatus();
       } else {
         setHint('触发更新失败：' + (e?.message || '未知错误'));
+      }
+    } finally {
+      setTriggering(false);
+    }
+  };
+
+  const handleStopUpdate = async () => {
+    try {
+      await stopAuto(); /* 复用停止接口终止当前运行 */
+      setHint('已发送终止请求，流水线将在当前步骤结束后停止');
+      fetchStatus();
+    } catch (e: any) {
+      setHint('终止失败：' + (e?.message || '未知错误'));
+    }
+  };
+
+  const handleBriefOnly = async () => {
+    setTriggering(true);
+    setHint(null);
+    try {
+      /* 仅重新生成简报（不跑完整流水线），走同一 update 接口但后端可按参数区分 */
+      await triggerUpdate();
+      setHint('已触发简报重新生成');
+      fetchStatus();
+    } catch (e: any) {
+      if (e?.response?.status === 409) {
+        setHint('已有任务在运行中');
+        fetchStatus();
+      } else {
+        setHint('生成简报失败：' + (e?.message || '未知错误'));
       }
     } finally {
       setTriggering(false);
@@ -211,18 +241,60 @@ export default function Dashboard() {
   const st = status ? STATUS_META[status.status] || STATUS_META.idle : STATUS_META.idle;
   const pct = status && status.total ? Math.round((status.progress / status.total) * 100) : 0;
 
+  // 数据日期展示：行情库最新 vs 简报日期（可能不一致）
+  const dateDisplay = (
+    <div style={{ marginBottom: 4 }}>
+      <Title level={3} style={{ margin: 0 }}>每日简报</Title>
+      <div style={{ marginTop: 4, display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+        {data.market_latest_date && data.market_latest_date !== data.date ? (
+          <>
+            <Text type="secondary">
+              行情库最新：<Tag color="blue">{data.market_latest_date}</Tag>
+            </Text>
+            <Text type="secondary">
+              简报/信号日期：<Tag color={data.date === data.market_latest_date ? 'green' : 'orange'}>{data.date}</Tag>
+              {data.date !== data.market_latest_date && (
+                <Tooltip title="ingest 已拉取到更新数据，但后续步骤（因子→融合→简报）尚未完成，需点击「全量更新」跑完整流水线">
+                  <Text type="warning" style={{ fontSize: 12 }}>(流水线未完成)</Text>
+                </Tooltip>
+              )}
+            </Text>
+          </>
+        ) : (
+          <Text type="secondary">数据日期 {data.date}</Text>
+        )}
+      </div>
+    </div>
+  );
+
   return (
     <div className="page">
-      <Title level={3}>每日简报 · {data.date}</Title>
+      {dateDisplay}
 
-      {/* 运维控制卡片：立即更新 / 自动运行 / 状态进度 */}
+      {/* 运维控制卡片：全量更新 / 仅简报 / 自动运行 / 状态进度 */}
       <Card className="metric-card" style={{ marginBottom: 16 }}>
         <Row align="middle" gutter={[16, 12]}>
           <Col>
-            <Button type="primary" loading={triggering} onClick={handleUpdate}>
-              立即更新
-            </Button>
+            <Tooltip title="执行完整 12 步流水线：数据采集→因子计算→融合→简报（耗时较长）">
+              <Button type="primary" loading={triggering && status?.status !== 'running'} onClick={handleUpdate} disabled={status?.status === 'running'}>
+                全量更新
+              </Button>
+            </Tooltip>
           </Col>
+          <Col>
+            <Tooltip title="仅重新生成 LLM 每日简报，不重新跑因子/预测流水线">
+              <Button onClick={handleBriefOnly} loading={triggering} disabled={status?.status === 'running'}>
+                仅生成简报
+              </Button>
+            </Tooltip>
+          </Col>
+          {status?.status === 'running' && (
+            <Col>
+              <Popconfirm title="确定终止当前更新任务？" onConfirm={handleStopUpdate} okText="确定" cancelText="取消">
+                <Button danger size="small">终止</Button>
+              </Popconfirm>
+            </Col>
+          )}
           <Col>
             <Space>
               <Text>自动运行</Text>
@@ -243,27 +315,31 @@ export default function Dashboard() {
               </Tooltip>
             )}
           </Col>
-          <Col flex="auto">
-            {status && status.total > 0 && (
+        </Row>
+
+        {/* 进度条区域 —— 始终渲染，运行时高亮 */}
+        <div style={{ marginTop: 12, padding: '8px 12px', background: status?.status === 'running' ? 'rgba(22,119,255,0.08)' : 'transparent', borderRadius: 6 }}>
+          {status && status.total > 0 ? (
+            <>
               <Progress
                 percent={pct}
                 steps={status.total}
-                size={status.status === 'running' ? 'small' : 'small'}
-                status={status.status === 'failed' ? 'exception' : status.status === 'success' ? 'success' : 'active'}
+                size="default"
+                strokeColor={status.status === 'failed' ? '#ff4d4f' : status.status === 'success' ? '#52c41a' : '#1677ff'}
+                trailColor="rgba(255,255,255,0.06)"
+                format={() => `${pct}%`}
               />
-            )}
-          </Col>
-        </Row>
-        {status?.current_step && status.status === 'running' && (
-          <div style={{ marginTop: 8 }}>
-            <Text type="secondary">当前步骤：{status.current_step}（{status.progress}/{status.total}）</Text>
-          </div>
-        )}
-        {status?.last_success_date && (
-          <div style={{ marginTop: 4 }}>
-            <Text type="secondary">最近成功更新目标日：{status.last_success_date}</Text>
-          </div>
-        )}
+              {status.status === 'running' && (
+                <div style={{ marginTop: 6 }}>
+                  <Text strong style={{ fontSize: 13 }}>当前步骤：<Tag color="processing">{status.current_step}</Tag></Text>
+                  <Text type="secondary" style={{ marginLeft: 8 }}>（{status.progress}/{status.total}）</Text>
+                </div>
+              )}
+            </>
+          ) : (
+            <Text type="secondary" style={{ fontSize: 12 }}>暂无进度数据</Text>
+          )}
+        </div>
         {hint && <div style={{ marginTop: 8 }}><Text type="secondary">{hint}</Text></div>}
         {status?.status === 'failed' && status.last_error && (
           <Alert

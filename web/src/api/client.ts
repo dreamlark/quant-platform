@@ -66,6 +66,7 @@ export interface SignalDetail {
 
 export interface DashboardSummary {
   date: string;
+  market_latest_date?: string | null;  // 行情库最新交易日
   market_temperature: number;
   brief?: string;
   top_signals: Signal[];
@@ -98,6 +99,20 @@ export function triggerUpdate() {
 // 查询当前更新/调度状态
 export function getUpdateStatus() {
   return api.get<UpdateStatus>('/admin/status');
+}
+
+// 实时运行日志（含每步状态/进度）
+export function getRunLogs() {
+  return api.get<{ logs: RunLog[]; status: string }>('/admin/logs');
+}
+
+// 运行日志条目
+export interface RunLog {
+  ts: string;
+  level: 'info' | 'success' | 'warn' | 'error';
+  step: string;
+  step_label: string;
+  message: string;
 }
 
 // 开启 Web 可控的自动运行（工作日 18:30 自动更新）

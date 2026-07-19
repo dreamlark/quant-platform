@@ -64,6 +64,30 @@ class UpdateManager:
         self._scheduler = None
         self._thread: threading.Thread | None = None
         self._run_meta: dict = {"run_id": None, "started_at": None, "trigger": "manual"}
+        # —— 实时运行日志缓冲（前端轮询展示）——
+        self._log_lock = threading.Lock()
+        self._logs: list[dict] = []
+        self._log_max = 500  # 滚动保留最近 500 条
+
+    def _log(self, level: str, message: str, step: str = "", step_label: str = "") -> None:
+        """线程安全追加一条运行日志（带时间戳 + 步骤标识）。"""
+        ts = dt.datetime.now().strftime("%H:%M:%S")
+        entry = {
+            "ts": ts,
+            "level": level,        # info | success | warn | error
+            "step": step,
+            "step_label": step_label,
+            "message": message,
+        }
+        with self._log_lock:
+            self._logs.append(entry)
+            if len(self._logs) > self._log_max:
+                self._logs = self._logs[-self._log_max:]
+
+    def get_logs(self) -> list[dict]:
+        """返回当前运行日志副本（前端轮询用）。"""
+        with self._log_lock:
+            return list(self._logs)
 
     # -------- 构造编排器（复用 _run_real 的 HS300 域 + akshare 逻辑）--------
     def _build_orch(self):
@@ -118,15 +142,26 @@ class UpdateManager:
             "backtest": lambda: orch.step_backtest(today),
         }
 
-        # 1) 先拉最新行情（确定目标日）
-        step_fns["ingest"]()
+        # 1) 先拉最新行情（确定目标日），完成后立即更新进度
+        self.state["current_step"] = "ingest"
+        self.state["message"] = "正在拉取行情数据..."
+        self._log("info", "开始拉取最新日K行情...", "ingest", "拉取最新日K")
+        try:
+            step_fns["ingest"]()
+        except Exception as exc:
+            self._log("error", f"拉取行情失败：{exc}", "ingest", "拉取最新日K")
+            raise RuntimeError(f"步骤「ingest」拉取行情失败：{exc}") from exc
         target = repo.market.execute("SELECT max(date) FROM daily_bars").fetchone()[0]
         orch.source = None  # 后续不再重复 ingest
+        self.state["progress"] = 1  # ingest 完成，进度从 0→1
+        self.state["last_success_date"] = str(target)
+        self._log("success", f"行情拉取完成，目标日 {target}", "ingest", "拉取最新日K")
 
         # 2) 依次跑其余步骤，每步最多重试 3 次
         done = 1  # ingest 已完成
-        for name, _ in _STEPS[1:]:
+        for name, label in _STEPS[1:]:
             self.state["current_step"] = name
+            self._log("info", f"步骤开始：{label}", name, label)
             last_err: Exception | None = None
             for attempt in range(3):
                 try:
@@ -135,16 +170,22 @@ class UpdateManager:
                     break
                 except Exception as exc:  # noqa: BLE001
                     last_err = exc
-                    time.sleep(3 * (attempt + 1))  # 退避 3/6/9s
+                    if attempt < 2:
+                        self._log("warn", f"{label} 第{attempt+1}次失败，{3*(attempt+1)}s 后重试：{exc}", name, label)
+                        time.sleep(3 * (attempt + 1))  # 退避 3/6/9s
+                    else:
+                        self._log("error", f"{label} 第3次失败：{exc}", name, label)
             if last_err is not None:
                 raise RuntimeError(f"步骤「{name}」重试 3 次仍失败：{last_err}")
             done += 1
             self.state["progress"] = done
+            self._log("success", f"步骤完成：{label}（{done}/{len(_STEPS)}）", name, label)
 
         self.state["status"] = "success"
         self.state["last_success_date"] = str(target)
         self.state["last_error"] = None
         self.state["message"] = f"更新完成，目标日 {target}"
+        self._log("success", f"全部步骤完成，目标日 {target}", "", "完成")
 
     # -------- 触发（防并发）--------
     def trigger(self, source: str = "manual") -> bool:
@@ -157,6 +198,10 @@ class UpdateManager:
             self.state["last_error"] = None
             self.state["message"] = "开始更新..."
             self.state["current_step"] = "ingest"
+            # 新一轮：清空旧日志，从本次运行开始记录
+            with self._log_lock:
+                self._logs = []
+            self._log("info", f"触发数据更新（来源：{source}）", "", "开始")
             self._run_meta = {
                 "run_id": uuid.uuid4().hex[:12],
                 "started_at": self.state["started_at"],
@@ -174,6 +219,9 @@ class UpdateManager:
             self.state["status"] = "failed"
             self.state["last_error"] = f"{type(exc).__name__}: {exc}"
             self.state["message"] = "更新失败——可再次点击「立即更新」从断点续跑"
+            self._log("error", f"更新失败：{type(exc).__name__}: {exc}", "", "失败")
+        else:
+            self._log("success", "更新轮次成功结束", "", "完成")
         finally:
             finished_at = dt.datetime.now().isoformat(timespec="seconds")
             self.state["finished_at"] = finished_at
@@ -252,6 +300,12 @@ def update():
 def status():
     """当前更新/调度状态。"""
     return mgr.state
+
+
+@router.get("/logs")
+def logs():
+    """实时运行日志（前端轮询展示，含每步开始/完成/重试/失败）。"""
+    return {"logs": mgr.get_logs(), "status": mgr.state["status"]}
 
 
 @router.post("/auto/start")

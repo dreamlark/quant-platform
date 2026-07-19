@@ -52,8 +52,20 @@ class BaostockAdapter(DataSource):
                 frequency="d",
                 adjustflag="3",  # 3=不复权
             )
+            # ⚠️ baostock 错误状态时 rs.next() 返回 bool(False) 而非行数据，
+            # 必须检查 error_code 且确认返回值为 tuple/list 再迭代
+            if getattr(rs, 'error_code', None) != '0':
+                logger.warning(f"baostock 查询 {code} 返回错误：code={getattr(rs,'error_code','?')} msg={getattr(rs,'errmsg','?')}")
+                return []
             out: List[Dict[str, Any]] = []
-            while (row := rs.next()) is not None:  # type: ignore[assignment]
+            while True:
+                row = rs.next()
+                if row is None:
+                    break
+                # 防御：某些异常情况下可能返回非序列类型
+                if not isinstance(row, (list, tuple)):
+                    logger.debug(f"baostock {code} 返回非预期类型 {type(row).__name__}，跳过")
+                    break
                 out.append(
                     self.normalize_row(
                         code,

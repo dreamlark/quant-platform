@@ -29,6 +29,16 @@ body,
 
 .page {
   padding: 16px;
+  /* 侧边栏折叠后 Sider 宽度仅 80px（含 trigger），
+     内容区需预留空间避免被汉堡按钮(≡)遮挡 */
+  padding-left: max(16px, calc(80px + 8px));
+}
+
+/* 侧边栏展开时（>lg 断点约 992px），内容区正常内边距 */
+@media (min-width: 992px) {
+  .page {
+    padding-left: 16px;
+  }
 }
 
 .metric-card {
