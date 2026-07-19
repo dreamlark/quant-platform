@@ -152,6 +152,43 @@ class UpdateManager:
         orch = Orchestrator(repo=repo, settings=settings, data_source=src, stock_list=stock_list)
         return orch, repo, stock_list
 
+    # -------- 长步骤心跳：在耗时操作期间定期写入进度日志 --------
+    def _run_with_heartbeat(self, fn, step_name: str, step_label: str) -> None:
+        """在线程中执行 fn()，同时每隔 HEARTBEAT_INTERVAL 秒写一条心跳日志，
+        让前端实时看到步骤仍在执行及已耗时。"""
+        import threading as _th
+
+        result_holder: list[None | BaseException] = [None]
+        elapsed = [0.0]
+        stopped = [False]
+        HEARTBEAT_INTERVAL = 20  # 每 20 秒报一次心跳
+
+        def _heartbeat():
+            while not stopped[0]:
+                time.sleep(HEARTBEAT_INTERVAL)
+                if not stopped[0]:
+                    elapsed[0] += HEARTBEAT_INTERVAL
+                    mins = int(elapsed[0] // 60)
+                    secs = int(elapsed[0] % 60)
+                    self._log(
+                        "info",
+                        f"{step_label} 执行中… 已耗时 {mins}分{secs:02d}秒",
+                        step_name,
+                        step_label,
+                    )
+
+        hb_thread = _th.Thread(target=_heartbeat, daemon=True)
+        hb_thread.start()
+        try:
+            fn()
+        except Exception as e:
+            result_holder[0] = e
+        finally:
+            stopped[0] = True
+            hb_thread.join(timeout=2)
+        if result_holder[0] is not None:
+            raise result_holder[0]
+
     # -------- 跑一轮（每步自动重试）--------
     def _run_once(self) -> None:
         orch, repo, _ = self._build_orch()
@@ -172,12 +209,15 @@ class UpdateManager:
             "backtest": lambda: orch.step_backtest(today),
         }
 
+        # 标记已知耗时的步骤（这些步骤使用 _run_with_heartbeat 注入心跳日志）
+        SLOW_STEPS = {"ingest", "factors", "predict", "llm", "backtest"}
+
         # 1) 先拉最新行情（确定目标日），完成后立即更新进度
         self.state["current_step"] = "ingest"
         self.state["message"] = "正在拉取行情数据..."
-        self._log("info", "开始拉取最新日K行情...", "ingest", "拉取最新日K")
+        self._log("info", "开始拉取最新日K行情（全量 300+ 股票，预计需数分钟）...", "ingest", "拉取最新日K")
         try:
-            step_fns["ingest"]()
+            self._run_with_heartbeat(step_fns["ingest"], "ingest", "拉取最新日K")
         except Exception as exc:
             self._log("error", f"拉取行情失败：{exc}", "ingest", "拉取最新日K")
             raise RuntimeError(f"步骤「ingest」拉取行情失败：{exc}") from exc
@@ -191,11 +231,13 @@ class UpdateManager:
         done = 1  # ingest 已完成
         for name, label in _STEPS[1:]:
             self.state["current_step"] = name
+            self.state["message"] = f"正在执行：{label}..."
             self._log("info", f"步骤开始：{label}", name, label)
             last_err: Exception | None = None
+            runner = self._run_with_heartbeat if name in SLOW_STEPS else (lambda f, n, l: f())
             for attempt in range(3):
                 try:
-                    step_fns[name]()
+                    runner(step_fns[name], name, label)
                     last_err = None
                     break
                 except Exception as exc:  # noqa: BLE001

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import {
   Card, Row, Col, Table, Typography, Tag, Statistic, Empty, Progress, Tooltip, Alert, Button, Space,
 } from 'antd';
@@ -64,20 +64,51 @@ export default function Monitor() {
       .then((r) => setLogs(r.data.logs || []))
       .catch(() => {});
 
+  const [isRunning, setIsRunning] = useState(false);
+  const timersRef = useRef<{ t1?: ReturnType<typeof setInterval>; t2?: ReturnType<typeof setInterval>; t3?: ReturnType<typeof setInterval> }>({});
+
+  const clearAllTimers = useCallback(() => {
+    clearInterval(timersRef.current.t1);
+    clearInterval(timersRef.current.t2);
+    clearInterval(timersRef.current.t3);
+    timersRef.current = {};
+  }, []);
+
+  // 核心轮询逻辑：根据 isRunning 动态切换频率
+  const applyPolling = useCallback((running: boolean) => {
+    clearAllTimers();
+    if (running) {
+      timersRef.current.t1 = setInterval(loadOverview, 4000);   // 运行中：4s
+      timersRef.current.t2 = setInterval(loadHistory, 10000);     // 运行中：10s
+      timersRef.current.t3 = setInterval(loadLogs, 2000);         // 运行中：2s
+    } else {
+      timersRef.current.t1 = setInterval(loadOverview, 15000);    // 空闲：15s
+      timersRef.current.t2 = setInterval(loadHistory, 30000);     // 空闲：30s
+      timersRef.current.t3 = setInterval(loadLogs, 10000);        // 空闲：10s
+    }
+  }, [clearAllTimers, loadOverview, loadHistory, loadLogs]);
+
+  // 初始化：先加载数据，再根据初始状态设轮询
   useEffect(() => {
     setError(null);
-    loadOverview();
+    loadOverview().then(() => {
+      const running = ov?.pipeline?.status === 'running';
+      setIsRunning(running);
+      applyPolling(running);
+    });
     loadHistory();
     loadLogs();
-    const t1 = setInterval(loadOverview, 4000);
-    const t2 = setInterval(loadHistory, 8000);
-    const t3 = setInterval(loadLogs, 1500);  // 运行日志高频刷新
-    return () => {
-      clearInterval(t1);
-      clearInterval(t2);
-      clearInterval(t3);
-    };
-  }, []);
+    return clearAllTimers;
+  }, []);  // eslint-disable-line react-hooks/exhaustive-deps
+
+  // 监听运行状态变化，动态切换轮询频率
+  useEffect(() => {
+    if (ov?.pipeline?.status === 'running') {
+      if (!isRunning) { setIsRunning(true); applyPolling(true); }
+    } else {
+      if (isRunning) { setIsRunning(false); applyPolling(false); }
+    }
+  }, [ov?.pipeline?.status]);  // eslint-disable-line react-hooks/exhaustive-deps
 
   // 日志自动滚动（hooks 必须在条件返回前）
   useEffect(() => {
