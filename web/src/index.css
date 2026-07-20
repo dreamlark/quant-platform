@@ -1,161 +1,566 @@
+/* ══════════════════════════════════════════════════════════
+   quant-platform v2 — Global Stylesheet
+   Based on: taste-skill (redesign-skill) methodology
+   Design Read: Dark Tech Premium Terminal
+   Dials: VARIANCE=4 | MOTION=4 | DENSITY=8
+   ══════════════════════════════════════════════════════════ */
+
+/* ─── Font Import ─── */
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Outfit:wght@400;500;600;700;800&display=swap');
+
+/* ─── CSS Custom Properties (Design Tokens) ─── */
+:root {
+  /* Colors */
+  --bg-base: #090c10;
+  --bg-surface: #111620;
+  --bg-elevated: #1a2030;
+  --text-primary: rgba(255,255,255,0.92);
+  --text-secondary: rgba(255,255,255,0.50);
+  --text-tertiary: rgba(255,255,255,0.28);
+  --accent: #00c9a7;
+  --accent-muted: rgba(0,201,167,0.15);
+  --accent-glow: rgba(0,201,167,0.20);
+  --border: rgba(255,255,255,0.07);
+  --border-strong: rgba(255,255,255,0.12);
+  --up-color: #ff6363;
+  --down-color: #4ade80;
+  --up-bg: rgba(255,99,99,0.12);
+  --down-bg: rgba(74,222,128,0.12);
+
+  /* Typography */
+  --font-display: 'Outfit', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', sans-serif;
+  --font-body: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+  --font-mono: 'JetBrains Mono', 'SF Mono', SF Pro Text, Menlo, Consolas, monospace;
+
+  /* Spacing & Radii */
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --space-xs: 4px;
+  --space-sm: 8px;
+  --space-md: 16px;
+  --space-lg: 24px;
+  --space-xl: 32px;
+
+  /* Shadows */
+  --shadow-card: 0 1px 0 rgba(255,255,255,0.04), 0 4px 16px rgba(0,0,0,0.30);
+  --shadow-card-hover: 0 1px 0 rgba(255,255,255,0.07), 0 8px 28px rgba(0,0,0,0.45), 0 0 40px rgba(0,201,167,0.12);
+
+  /* Transitions */
+  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+  --transition-fast: 150ms var(--ease-out-expo);
+  --transition-normal: 250ms var(--ease-out-expo);
+  --transition-slow: 400ms var(--ease-out-expo);
+}
+
+/* ═══ Base Reset & Typography ═══ */
+
 html,
 body,
 #root {
   height: 100%;
   margin: 0;
-  background: var(--bg-base, var(--app-color-bg-base, #0e1116));
-  color: var(--text-primary, rgba(255, 255, 255, 0.88));
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
-    'Hiragino Sans GB', 'Microsoft YaHei', Roboto, Helvetica, Arial, sans-serif;
-  transition: background-color 0.3s ease, color 0.3s ease;
+  background: var(--bg-base);
+  color: var(--text-primary);
+  font-family: var(--font-body);
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  transition: background-color var(--transition-normal), color var(--transition-normal);
 }
 
-/* 品牌标识（侧栏顶部） */
+/* Display typography (headings, brand) */
+h1, h2, h3, h4, h5, h6 {
+  font-family: var(--font-display);
+  font-weight: 700;
+  line-height: 1.25;
+  letter-spacing: -0.01em;
+  color: var(--text-primary);
+}
+
+/* Numeric data: always tabular figures */
+[data-mono],
+.mono,
+.ant-statistic-content-value,
+.ant-table-cell .ant-typography,
+code, pre, kbd, samp {
+  font-family: var(--font-mono) !important;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.01em;
+}
+
+/* Selection */
+::selection {
+  background: var(--accent-muted);
+  color: #fff;
+}
+
+
+/* ═══ Subtle Background Texture ═══ */
+
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  opacity: 0.025;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E");
+  background-repeat: repeat;
+  pointer-events: none;
+}
+
+
+/* ═══ Sidebar Brand Area ═══ */
+
 .app-logo {
-  height: 48px;
-  margin: 12px 16px;
+  height: 56px;
+  margin: 14px 16px 10px;
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 11px;
   color: #fff;
+  font-family: var(--font-display);
   font-weight: 800;
   font-size: 16px;
-  letter-spacing: 0.5px;
+  letter-spacing: -0.02em;
   white-space: nowrap;
   overflow: hidden;
+  user-select: none;
 }
 .app-logo .logo-mark {
-  width: 28px;
-  height: 28px;
+  width: 30px;
+  height: 30px;
   border-radius: 8px;
-  background: linear-gradient(135deg, #177ddc, #13c2c2);
+  background: linear-gradient(135deg, #00c9a7 0%, #00e6bc 50%, #38bdf8 100%);
   display: inline-flex;
   align-items: center;
   justify-content: center;
   font-size: 16px;
   flex: 0 0 auto;
-  box-shadow: 0 2px 8px rgba(23, 125, 220, 0.35);
+  box-shadow: 0 2px 12px rgba(0,201,167,0.35);
+  transition: transform var(--transition-fast), box-shadow var(--transition-fast);
+}
+.app-logo:hover .logo-mark {
+  transform: scale(1.06) rotate(-2deg);
+  box-shadow: 0 4px 18px rgba(0,201,167,0.45);
 }
 
-/* 顶部 Header */
+
+/* ═══ Top Header (Glassmorphism) ═══ */
+
 .app-header {
   display: flex !important;
   align-items: center !important;
   justify-content: space-between !important;
-  height: 56px !important;
-  padding: 0 20px !important;
+  height: 54px !important;
+  padding: 0 22px !important;
   line-height: normal !important;
-  background: rgba(14, 17, 22, 0.85) !important;
-  backdrop-filter: blur(8px);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+  position: relative;
+  z-index: 10;
+}
+.app-header::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    180deg,
+    rgba(17,22,32,0.95) 0%,
+    rgba(17,22,32,0.85) 100%
+  );
+  backdrop-filter: blur(16px) saturate(1.4);
+  -webkit-backdrop-filter: blur(16px) saturate(1.4);
+  border-bottom: 1px solid var(--border);
+  z-index: -1;
 }
 .app-header .header-title {
-  font-size: 15px;
+  font-family: var(--font-display);
+  font-size: 14.5px;
   font-weight: 600;
-  color: rgba(255, 255, 255, 0.9);
+  letter-spacing: -0.01em;
+  color: var(--text-primary);
 }
 .app-header .header-meta {
   font-size: 12px;
-  color: rgba(255, 255, 255, 0.5);
+  font-family: var(--font-mono);
+  color: var(--text-tertiary);
+  letter-spacing: 0.01em;
 }
 
-/* 免责声明条 */
+
+/* ═══ Disclaimer Bar ═══ */
+
 .disclaimer {
-  font-size: 12px;
-  color: var(--app-color-warning, #faad14);
-  padding: 5px 16px;
-  background: var(--disclaimer-bg, rgba(250, 173, 20, 0.08));
-  border-bottom: 1px solid var(--disclaimer-border, rgba(250, 173, 20, 0.18));
+  font-size: 11.5px;
+  font-family: var(--font-mono);
+  letter-spacing: 0.01em;
+  color: var(--up-color);
+  padding: 5px 18px;
+  background: rgba(245,158,11,0.05);
+  border-bottom: 1px solid rgba(245,158,11,0.12);
+  opacity: 0.75;
 }
 
-/* 页面容器 */
+
+/* ═══ Page Container ═══ */
+
 .page {
-  padding: 20px;
-  /* 侧边栏折叠后 Sider 宽度 48px（collapsedWidth=48），
-     内容区需预留空间避免被收起按钮(≡)遮挡 */
-  padding-left: max(20px, calc(48px + 8px));
+  padding: var(--space-lg);
+  padding-left: max(var(--space-lg), calc(48px + 8px));
 }
 
-/* 侧边栏展开时（>lg 断点约 992px），内容区正常内边距 */
 @media (min-width: 992px) {
-  .page {
-    padding-left: 20px;
-  }
+  .page { padding-left: var(--space-lg); }
 }
 
-/* 折叠后的侧边栏：trigger 按钮居中显示在 48px 窄条内 */
-.ant-layout-sider-collapsed .ant-layout-sider-trigger {
-  width: 48px !important;
-}
 
-/* 统一页头 */
+/* ═══ Page Header (Title + Actions) ═══ */
+
 .page-header {
   display: flex;
   align-items: flex-end;
   justify-content: space-between;
-  gap: 16px;
-  margin-bottom: 16px;
+  gap: var(--space-md);
+  margin-bottom: var(--space-md);
   flex-wrap: wrap;
 }
 .page-title {
   margin: 0;
-  font-size: 20px;
+  font-family: var(--font-display);
+  font-size: 21px;
   font-weight: 700;
   line-height: 1.3;
-  color: rgba(255, 255, 255, 0.92);
+  letter-spacing: -0.02em;
+  color: var(--text-primary);
 }
 .page-subtitle {
-  margin-top: 4px;
-  font-size: 13px;
-  color: rgba(255, 255, 255, 0.5);
+  margin-top: 5px;
+  font-size: 12.5px;
+  font-family: var(--font-mono);
+  color: var(--text-tertiary);
+  letter-spacing: 0.01em;
 }
 .page-header-extra {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-sm);
 }
 
-/* 加载 / 空态 */
+
+/* ═══ Card System (Premium Hover) ═══ */
+
+.ant-card {
+  border: 1px solid var(--border) !important;
+  border-radius: var(--radius-md) !important;
+  box-shadow: var(--shadow-card) !important;
+  transition:
+    transform var(--transition-normal),
+    box-shadow var(--transition-normal),
+    border-color var(--transition-fast) !important;
+  backdrop-filter: initial;
+}
+.ant-card:hover {
+  border-color: var(--border-strong) !important;
+  box-shadow: var(--shadow-card-hover) !important;
+  transform: translateY(-1px);
+}
+.ant-card-head {
+  border-bottom: 1px solid var(--border-subtle) !important;
+  min-height: auto;
+  padding: 14px 20px 10px !important;
+}
+.ant-card-head-title {
+  font-family: var(--font-display);
+  font-size: 14px;
+  font-weight: 600;
+  padding-top: 0 !important;
+}
+.ant-card-body {
+  padding: 16px 20px 18px !important;
+}
+.metric-card {
+  margin-bottom: var(--space-md);
+}
+
+
+/* ═══ Table Refinement ═══ */
+
+.ant-table-wrapper .ant-table {
+  border-radius: var(--radius-md) !important;
+  overflow: hidden;
+}
+.ant-table-thead > tr > th {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 12px;
+  text-transform: none;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--text-secondary) !important;
+  background: transparent !important;
+}
+.ant-table-tbody > tr > td {
+  font-variant-numeric: tabular-nums;
+  transition: background var(--transition-fast) !important;
+}
+.ant-table-tbody > tr:last-child > td {
+  border-bottom: none !important;
+}
+/* Zebra striping for readability on dense tables */
+.ant-table-tbody > tr:nth-child(even) {
+  background: rgba(255,255,255,0.012) !important;
+}
+
+
+/* ═══ Tag / Badge Redesign ═══ */
+
+.ant-tag {
+  font-family: var(--font-display);
+  font-size: 11.5px;
+  font-weight: 500;
+  border-radius: var(--radius-sm) !important;
+  border: none !important;
+  padding: 1px 8px !important;
+  line-height: 22px;
+  letter-spacing: 0.01em;
+  transition: all var(--transition-fast) !important;
+}
+/* Remove pill default - use square tags */
+.ant-tag-red {
+  background: var(--up-bg) !important;
+  color: var(--up-color) !important;
+  border: none !important;
+}
+.ant-tag-green {
+  background: var(--down-bg) !important;
+  color: var(--down-color) !important;
+  border: none !important;
+}
+.ant-tag-blue {
+  background: rgba(56,189,248,0.12) !important;
+  color: #38bdf8 !important;
+  border: none !important;
+}
+.ant-tag-orange {
+  background: rgba(251,146,60,0.12) !important;
+  color: #fb923c !important;
+  border: none !important;
+}
+.ant-tag-purple {
+  background: rgba(192,132,252,0.12) !important;
+  color: #c084fc !important;
+  border: none !important;
+}
+.ant-tag-cyan {
+  background: var(--accent-muted) !important;
+  color: var(--accent) !important;
+  border: none !important;
+}
+.ant-tag-default {
+  background: rgba(255,255,255,0.07) !important;
+  color: var(--text-secondary) !important;
+  border: none !important;
+}
+
+
+/* ═══ Button Tactile Feedback ═══ */
+
+.ant-btn-primary {
+  font-family: var(--font-display) !important;
+  font-weight: 600 !important;
+  letter-spacing: 0.01em !important;
+  transition:
+    transform var(--transition-fast),
+    box-shadow var(--transition-fast),
+    background-color var(--transition-fast) !important;
+}
+.ant-btn-primary:hover:not(:disabled) {
+  transform: translateY(-1px);
+}
+.ant-btn-primary:active:not(:disabled) {
+  transform: translateY(1px) scale(0.98);
+}
+.ant-btn-text {
+  transition: background var(--transition-fast), color var(--transition-fast) !important;
+}
+.ant-btn-text:hover {
+  background: var(--bg-hover) !important;
+}
+
+
+/* ═══ Statistic (Data Display) ═══ */
+
+.ant-statistic-title {
+  font-size: 12px !important;
+  font-family: var(--font-display);
+  font-weight: 500;
+  text-transform: none;
+  letter-spacing: 0.01em;
+  color: var(--text-secondary) !important;
+  margin-bottom: 4px !important;
+}
+.ant-statistic-content {
+  font-family: var(--font-mono) !important;
+  font-variant-_numeric: tabular-nums;
+}
+.ant-statistic-content-prefix,
+.antstatistic-content-suffix {
+  font-family: var(--font-mono) !important;
+}
+
+
+/* ═══ Progress Bar (Polished) ═══ */
+
+.ant-progress-inner {
+  background: var(--bg-elevated) !important;
+  border-radius: 3px !important;
+}
+.ant-progress-bg {
+  border-radius: 3px !important;
+  transition: width var(--transition-slow) !important;
+}
+/* Gradient fills for visual interest */
+.ant-progress-success-bg,
+.ant-progress-bg[style*="rgb(63"] {
+  /* green-ish bars get subtle gradient */
+  background: linear-gradient(90deg, var(--down-color), #86efac) !important;
+}
+.ant-progress-bg[style*="rgb(207"],
+.ant-progress-bg[style*="rgb(255"] {
+  /* red-ish bars */
+  background: linear-gradient(90deg, var(--up-color), #fca5a5) !important;
+}
+
+
+/* ═══ Input / Select / DatePicker refinement ═══ */
+
+.ant-input,
+.ant-input-affix-wrapper,
+.ant-picker,
+.ant-select-selector {
+  border-radius: var(--radius-sm) !important;
+  font-family: var(--font-mono) !important;
+  font-size: 13px !important;
+  transition:
+    border-color var(--transition-fast),
+    box-shadow var(--transition-fast) !important;
+}
+.ant-input:focus,
+.ant-input-focused,
+.ant-input-affix-wrapper-focused,
+.ant-picker-focused,
+.ant-select-focused .ant-select-selector {
+  border-color: var(--accent) !important;
+  box-shadow: 0 0 0 2px var(--accent-muted) !important;
+}
+
+
+/* ═══ Menu (Sidebar Navigation) ═══ */
+
+.ant-menu-dark .ant-menu-item-selected {
+  background: var(--accent-muted) !important;
+  color: var(--accent) !important;
+  border-radius: var(--radius-sm) !important;
+}
+.ant-menu-dark .ant-menu-item:hover {
+  background: rgba(255,255,255,0.04) !important;
+}
+.ant-menu-item {
+  margin: 2px 6px !important;
+  transition: all var(--transition-fast) !important;
+}
+
+
+/* ═══ Loading / Empty States ═══ */
+
 .page-loading {
   min-height: 60vh;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 12px;
+  gap: 14px;
 }
+.ant-skeleton-element .ant-skeleton-input {
+  border-radius: var(--radius-sm) !important;
+  background: linear-gradient(
+    90deg,
+    rgba(255,255,255,0.04) 25%,
+    rgba(255,255,255,0.08) 50%,
+    rgba(255,255,255,0.04) 75%
+  ) !important;
+  background-size: 200% 100%;
+  animation: shimmer 1.5s ease-in-out infinite;
+}
+@keyframes shimmer {
+  0%   { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
 }
 
-.metric-card {
-  margin-bottom: 16px;
-  border: 1px solid rgba(255, 255, 255, 0.08) !important;
-}
 
-/* 滚动条样式（支持多主题） */
+/* ═══ Scrollbar (Custom Thin) ═══ */
+
 ::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
+  width: 8px;
+  height: 8px;
 }
 ::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.16);
-  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.13);
+  border-radius: 100px;
   border: 2px solid transparent;
   background-clip: padding-box;
+  transition: background var(--transition-fast);
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.28);
+  background: rgba(255, 255, 255, 0.24);
   background-clip: padding-box;
 }
 ::-webkit-scrollbar-track {
   background: transparent;
 }
+/* Firefox */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255,255,255,0.13) transparent;
+}
 
-/* 窄屏适配 */
+
+/* ═══ Responsive Adjustments ═══ */
+
 @media (max-width: 768px) {
   .page {
-    padding: 12px;
+    padding: var(--space-sm);
+    padding-left: max(var(--space-sm), calc(48px + 6px));
   }
   .app-header {
     padding: 0 12px !important;
   }
+  .app-header .header-title {
+    font-size: 13px;
+  }
+  .page-title {
+    font-size: 18px;
+  }
+  .ant-card-body {
+    padding: 12px 14px 14px !important;
+  }
+}
+
+@media (min-width: 992px) {
+  .app-layout-sider-collapsed .ant-layout-sider-trigger {
+    width: 48px !important;
+  }
+}
+
+
+/* ═══ Reduced Motion ═══ */
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+  body::before { display: none; }
 }

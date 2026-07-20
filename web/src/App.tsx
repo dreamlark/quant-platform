@@ -1,5 +1,5 @@
 import React, { lazy, Suspense, useState, useEffect } from 'react';
-import { Layout, Menu, ConfigProvider, Typography, Button, Tooltip } from 'antd';
+import { Layout, Menu, ConfigProvider, Button, Tooltip } from 'antd';
 import {
   DashboardOutlined,
   FunctionOutlined,
@@ -13,11 +13,11 @@ import {
   FundOutlined,
 } from '@ant-design/icons';
 import { Routes, Route, useNavigate, useLocation, Navigate } from 'react-router-dom';
-import { darkTheme, getTheme, type ThemeMode, themeCSSVars } from './theme';
+import { getTheme, type ThemeMode, themeCSSVars } from './theme';
 import { PageLoading } from './components/common';
 import ErrorBoundary from './components/ErrorBoundary';
 
-// 路由级代码分割：echarts 等重型依赖不进入首屏
+// Route-level code splitting: heavy deps (echarts) excluded from initial bundle
 const Dashboard = lazy(() => import('./pages/Dashboard'));
 const Factors = lazy(() => import('./pages/Factors'));
 const Sectors = lazy(() => import('./pages/Sectors'));
@@ -25,7 +25,7 @@ const Stocks = lazy(() => import('./pages/Stocks'));
 const Watchlist = lazy(() => import('./pages/Watchlist'));
 const Monitor = lazy(() => import('./pages/Monitor'));
 const DataManagement = lazy(() => import('./pages/Data'));
-// Settings / Hotspot 不做懒加载（首屏即可能访问，且体积小）
+// Settings / Hotspot: small footprint, no lazy needed
 import Hotspot from './pages/Hotspot';
 import Settings from './pages/Settings';
 
@@ -50,10 +50,10 @@ export default function App() {
   const location = useLocation();
   const selected = menuItems.find((m) => location.pathname.startsWith(m.key))?.key || '/dashboard';
 
-  // 主题状态（支持 dark/light/compact/techblue）
+  // Theme state (dark / light / compact / techblue)
   const [themeMode, setThemeMode] = useState<ThemeMode>('dark');
 
-  // 从 localStorage 初始化
+  // Initialize from localStorage
   useEffect(() => {
     const saved = localStorage.getItem('theme-mode') as ThemeMode;
     if (saved && ['dark', 'light', 'compact', 'techblue'].includes(saved)) {
@@ -61,7 +61,7 @@ export default function App() {
     }
   }, []);
 
-  // 监听设置页面的主题切换事件
+  // Listen for theme-switch events from Settings page
   useEffect(() => {
     const handler = (e: Event) => {
       const mode = (e as CustomEvent).detail as ThemeMode;
@@ -74,53 +74,80 @@ export default function App() {
     return () => window.removeEventListener('theme-change', handler);
   }, []);
 
-  // 应用主题 CSS 变量
+  // Apply CSS custom properties for non-AntD elements
   useEffect(() => {
     const vars = themeCSSVars[themeMode] || themeCSSVars.dark;
     const root = document.documentElement;
     Object.entries(vars).forEach(([k, v]) => {
       root.style.setProperty(k, v);
     });
-    root.style.setProperty('--app-color-bg-base', vars['--bg-base'] || '#141414');
   }, [themeMode]);
 
   const currentTheme = getTheme(themeMode);
 
+  // Resolve header background based on theme
+  const isDark = themeMode !== 'light';
+  const headerStyle: React.CSSProperties = {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: '0 22px',
+    height: 54,
+    position: 'relative',
+    zIndex: 10,
+    background: 'transparent',
+    borderBottom: 'none',
+  };
+
   return (
     <ConfigProvider theme={currentTheme}>
-      <Layout style={{ minHeight: '100vh' }}>
-        <Sider theme={themeMode === 'light' ? 'light' : 'dark'} breakpoint="lg" collapsedWidth={48} collapsible>
+      <Layout style={{ minHeight: '100vh', background: 'var(--bg-base)' }}>
+        {/* ── Sidebar ── */}
+        <Sider
+          theme={isDark ? 'dark' : 'light'}
+          breakpoint="lg"
+          collapsedWidth={48}
+          collapsible
+          style={{
+            background: 'var(--bg-sidebar)',
+            borderRight: '1px solid var(--border)',
+          }}
+          width={218}
+        >
           <div className="app-logo">
             <span className="logo-mark"><FundOutlined /></span>
             <span>量化分析平台</span>
           </div>
           <Menu
-            theme={themeMode === 'light' ? 'light' : 'dark'}
+            theme={isDark ? 'dark' : 'light'}
             mode="inline"
             selectedKeys={[selected]}
             items={menuItems}
             onClick={(e) => navigate(e.key)}
+            style={{
+              borderInlineEnd: 'none',
+              background: 'transparent',
+            }}
           />
         </Sider>
-        <Layout>
-          <Header
-            style={{
-              display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: 'center',
-              padding: '0 16px',
-              height: 48,
-              background: themeMode === 'light' ? '#fff' : '#1f1f1f',
-              borderBottom: '1px solid rgba(128,128,128,0.15)',
-            }}
-          >
-            <span style={{
-              fontSize: 14,
-              color: themeMode === 'light' ? 'rgba(0,0,0,0.88)' : 'rgba(255,255,255,0.88)',
-              fontWeight: 600,
-            }}>
-              A 股日频量化分析平台
-            </span>
+
+        {/* ── Main Area ── */}
+        <Layout style={{ background: 'var(--bg-base)' }}>
+          {/* Glassmorphism Header */}
+          <Header style={headerStyle} className="app-header">
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: 12 }}>
+              <span className="header-title">A 股日频量化分析平台</span>
+              <span
+                className="header-meta"
+                style={{
+                  fontSize: 11,
+                  color: isDark ? 'var(--text-tertiary)' : 'rgba(0,0,0,0.35)',
+                }}
+              >
+                analysis-first · 仅供研究参考
+              </span>
+            </div>
+
             <Tooltip title="系统设置">
               <Button
                 type="text"
@@ -128,13 +155,19 @@ export default function App() {
                 onClick={() => navigate('/settings')}
                 style={{
                   fontSize: 16,
-                  color: themeMode === 'light' ? '#333' : 'rgba(255,255,255,0.65)',
+                  color: isDark ? 'rgba(255,255,255,0.55)' : 'rgba(0,0,0,0.5)',
+                  borderRadius: 'var(--radius-sm)',
+                  transition: 'all var(--transition-fast)',
                 }}
               />
             </Tooltip>
           </Header>
+
+          {/* Disclaimer Bar */}
           <div className="disclaimer">{DISCLAIMER}</div>
-          <Content>
+
+          {/* Page Content */}
+          <Content style={{ background: 'transparent' }}>
             <ErrorBoundary>
               <Suspense fallback={<PageLoading tip="页面加载中…" />}>
                 <Routes>
