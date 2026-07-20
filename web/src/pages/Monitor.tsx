@@ -126,6 +126,19 @@ export default function Monitor() {
   const pipe = ov?.pipeline;
   const pct = pipe && pipe.total ? Math.round((pipe.progress / pipe.total) * 100) : 0;
 
+  // 各步骤预期最大耗时（秒）——超过则判定「可能卡死」提示用户
+  const STEP_EXPECTED_SEC: Record<string, number> = {
+    ingest: 600, universe: 120, factors: 180, sentiment: 120, predict: 180,
+    health: 120, neutralize: 120, fusion: 120, sector: 120,
+    market_sentiment: 120, llm: 300, backtest: 180,
+  };
+  // 卡死检测：运行中且当前步骤开始时间距今超过预期 → 提示可能卡死
+  const stepElapsedSec = pipe?.step_started_at
+    ? Math.round((Date.now() - new Date(pipe.step_started_at).getTime()) / 1000)
+    : 0;
+  const stepExpected = pipe?.current_step ? STEP_EXPECTED_SEC[pipe.current_step] || 180 : 180;
+  const isStuck = pipe?.status === 'running' && stepElapsedSec > stepExpected;
+
   // —— 数据状态卡 ——
   const dataCard = (
     <Card className="metric-card" title="数据状态（行情库）">
@@ -214,6 +227,15 @@ export default function Monitor() {
           {!ov?.auto.enabled && <Text type="secondary" style={{ fontSize: 12 }}>自动运行：关</Text>}
         </Col>
       </Row>
+      {isStuck && (
+        <Alert
+          style={{ marginTop: 8 }}
+          type="warning"
+          showIcon
+          message={`步骤「${pipe?.current_step}」已运行 ${Math.floor(stepElapsedSec / 60)}分${stepElapsedSec % 60}秒，超过预期 ${Math.floor(stepExpected / 60)} 分钟`}
+          description="可能卡死（网络/磁盘阻塞或死锁）。后端日志会同步标记 WARN，建议检查数据源连接或重启后端进程后重新触发。"
+        />
+      )}
       <div style={{ marginTop: 8 }}>
         <Progress
           percent={pct}

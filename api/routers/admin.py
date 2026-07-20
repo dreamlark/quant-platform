@@ -73,6 +73,40 @@ _STEPS = [
     ("backtest", "回测"),
 ]
 
+# 各步骤预期最大耗时（秒）——超过则心跳升级为 WARN 提示「可能卡死」
+_STEP_EXPECTED_SEC = {
+    "ingest": 600,      # 拉全量 300+ 股票日K，可能数分钟
+    "universe": 120,
+    "factors": 180,
+    "sentiment": 120,
+    "predict": 180,
+    "health": 120,
+    "neutralize": 120,
+    "fusion": 120,
+    "sector": 120,
+    "market_sentiment": 120,
+    "llm": 300,         # LLM 简报依赖外部 API
+    "backtest": 180,
+}
+
+# 各步骤完成后用于「结果确认」的落库表（按目标日统计行数，确认确有产出）
+_STEP_RESULT_TABLE = {
+    "ingest": "daily_bars",
+    "factors": "factor_values",
+    "sentiment": "sentiment_index",
+    "predict": "predict_values",
+    "health": "factor_health",
+    "neutralize": "signals",
+    "fusion": "signals",
+    "sector": "sector_rotation",
+    "market_sentiment": "sentiment_index",
+    "llm": "daily_brief",
+    "backtest": "backtest_report",
+}
+
+# 步骤名 → 中文标签（结果确认日志用）
+_STEP_LABEL = {name: label for name, label in _STEPS}
+
 
 class UpdateManager:
     def __init__(self) -> None:
@@ -82,6 +116,7 @@ class UpdateManager:
             "progress": 0,             # 已完成步骤数
             "total": len(_STEPS),
             "current_step": "",
+            "step_started_at": None,    # 当前步骤开始时间（卡死检测用）
             "started_at": None,
             "finished_at": None,
             "last_success_date": None,
@@ -152,24 +187,47 @@ class UpdateManager:
         orch = Orchestrator(repo=repo, settings=settings, data_source=src, stock_list=stock_list)
         return orch, repo, stock_list
 
-    # -------- 长步骤心跳：在耗时操作期间定期写入进度日志 --------
+    # -------- 长步骤心跳 + 卡死检测 --------
     def _run_with_heartbeat(self, fn, step_name: str, step_label: str) -> None:
-        """在线程中执行 fn()，同时每隔 HEARTBEAT_INTERVAL 秒写一条心跳日志，
-        让前端实时看到步骤仍在执行及已耗时。"""
+        """在线程中执行 fn()，同时定期写心跳日志。
+
+        - 正常期内每 20 秒写 INFO「执行中…已耗时 X」
+        - 超过 _STEP_EXPECTED_SEC 后升级为 WARN「可能卡死」，每 60 秒一次
+        """
         import threading as _th
 
         result_holder: list[None | BaseException] = [None]
         elapsed = [0.0]
         stopped = [False]
-        HEARTBEAT_INTERVAL = 20  # 每 20 秒报一次心跳
+        escalated = [False]
+        HEARTBEAT_INTERVAL = 20       # 正常心跳间隔
+        WARN_INTERVAL = 60            # 卡死告警间隔
+        expected = _STEP_EXPECTED_SEC.get(step_name, 180)
+
+        # 记录步骤开始时间（供前端卡死横幅计算）
+        self.state["step_started_at"] = dt.datetime.now().isoformat(timespec="seconds")
 
         def _heartbeat():
             while not stopped[0]:
                 time.sleep(HEARTBEAT_INTERVAL)
-                if not stopped[0]:
-                    elapsed[0] += HEARTBEAT_INTERVAL
-                    mins = int(elapsed[0] // 60)
-                    secs = int(elapsed[0] % 60)
+                if stopped[0]:
+                    break
+                elapsed[0] += HEARTBEAT_INTERVAL
+                mins = int(elapsed[0] // 60)
+                secs = int(elapsed[0] % 60)
+                exp_mins = expected // 60
+                if elapsed[0] > expected:
+                    # 超过预期 → 卡死告警（每 WARN_INTERVAL 秒一次，避免刷屏）
+                    if int(elapsed[0]) % WARN_INTERVAL < HEARTBEAT_INTERVAL:
+                        escalated[0] = True
+                        self._log(
+                            "warn",
+                            f"{step_label} 已执行 {mins}分{secs:02d}秒，超过预期 {exp_mins} 分钟，"
+                            f"可能卡死（网络/磁盘阻塞或死锁），建议检查后端进程与数据源连接",
+                            step_name,
+                            step_label,
+                        )
+                else:
                     self._log(
                         "info",
                         f"{step_label} 执行中… 已耗时 {mins}分{secs:02d}秒",
@@ -186,8 +244,30 @@ class UpdateManager:
         finally:
             stopped[0] = True
             hb_thread.join(timeout=2)
+            self.state["step_started_at"] = None
         if result_holder[0] is not None:
             raise result_holder[0]
+
+    # -------- 结果确认：步骤完成后验证落库行数 --------
+    def _verify_step_result(self, step_name: str, target: str) -> None:
+        """步骤成功后，按目标日统计落库表行数，确认确有产出（而非静默空跑）。"""
+        table = _STEP_RESULT_TABLE.get(step_name)
+        if not table:
+            return
+        try:
+            repo = get_repository()
+            # 不同表时间字段不同：daily_bars/sector_rotation 用 date，其余用 trade_date
+            date_col = "date" if table in ("daily_bars", "sector_rotation", "universe") else "trade_date"
+            row = repo.market.execute(
+                f"SELECT COUNT(*) FROM {table} WHERE {date_col} = ?", [target]
+            ).fetchone()
+            cnt = row[0] if row else 0
+            if cnt > 0:
+                self._log("success", f"结果确认：{table} 已落库 {cnt} 行（目标日 {target}）", step_name, _STEP_LABEL.get(step_name, step_name))
+            else:
+                self._log("warn", f"结果异常：{table} 目标日 {target} 行数为 0，步骤可能未产出数据", step_name, _STEP_LABEL.get(step_name, step_name))
+        except Exception as exc:
+            self._log("warn", f"结果确认跳过（{table} 查询失败：{exc}）", step_name, _STEP_LABEL.get(step_name, step_name))
 
     # -------- 跑一轮（每步自动重试）--------
     def _run_once(self) -> None:
@@ -226,12 +306,14 @@ class UpdateManager:
         self.state["progress"] = 1  # ingest 完成，进度从 0→1
         self.state["last_success_date"] = str(target)
         self._log("success", f"行情拉取完成，目标日 {target}", "ingest", "拉取最新日K")
+        self._verify_step_result("ingest", str(target))
 
         # 2) 依次跑其余步骤，每步最多重试 3 次
         done = 1  # ingest 已完成
         for name, label in _STEPS[1:]:
             self.state["current_step"] = name
             self.state["message"] = f"正在执行：{label}..."
+            self.state["step_started_at"] = dt.datetime.now().isoformat(timespec="seconds")
             self._log("info", f"步骤开始：{label}", name, label)
             last_err: Exception | None = None
             runner = self._run_with_heartbeat if name in SLOW_STEPS else (lambda f, n, l: f())
@@ -251,7 +333,9 @@ class UpdateManager:
                 raise RuntimeError(f"步骤「{name}」重试 3 次仍失败：{last_err}")
             done += 1
             self.state["progress"] = done
+            self.state["step_started_at"] = None
             self._log("success", f"步骤完成：{label}（{done}/{len(_STEPS)}）", name, label)
+            self._verify_step_result(name, str(target))
 
         self.state["status"] = "success"
         self.state["last_success_date"] = str(target)
@@ -298,6 +382,7 @@ class UpdateManager:
             finished_at = dt.datetime.now().isoformat(timespec="seconds")
             self.state["finished_at"] = finished_at
             self.state["current_step"] = ""
+            self.state["step_started_at"] = None  # 运行结束，清除卡死检测时间戳
         # 落运行历史（与 DuckDB 写者解耦，独立 JSONL）
         try:
             started = dt.datetime.fromisoformat(self._run_meta["started_at"])

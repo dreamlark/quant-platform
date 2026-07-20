@@ -106,6 +106,7 @@ export interface UpdateStatus {
   progress: number;        // 已完成步骤数
   total: number;           // 总步骤数
   current_step: string;    // 当前步骤名
+  step_started_at: string | null;  // 当前步骤开始时间（卡死检测用）
   started_at: string | null;
   finished_at: string | null;
   last_success_date: string | null; // 最近成功更新的目标日
