@@ -237,7 +237,8 @@ def test_llm_connection():
         import time
         t0 = time.time()
         response = client.chat(
-            messages=[{"role": "user", "content": "请回复'连接成功'四个字。"}],
+            system="",
+            user="请回复'连接成功'四个字。",
             max_tokens=20,
         )
         elapsed = time.time() - t0
