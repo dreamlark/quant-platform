@@ -93,17 +93,29 @@ echo.
 
 REM ---------- ⑦ 前端准备（可选）----------
 where pnpm >nul 2>&1
-if %errorlevel% equ 0 (
-    if exist "web" (
-        echo 安装前端依赖...
-        cd web
-        call pnpm install 2>nul
-        cd ..
-        echo [OK] 前端就绪
+if %errorlevel% neq 0 (
+    echo pnpm 未安装，正在通过 npm 全局安装...
+    npm install -g pnpm
+    if %errorlevel% neq 0 (
+        echo [警告] pnpm 自动安装失败，前端需手动安装
+        echo        手动步骤：npm install -g pnpm ^&^& cd web ^&^& pnpm install ^&^& pnpm dev
+        goto :after_frontend
     )
-) else (
-    echo [跳过] 未找到 pnpm，前端需手动安装： cd web ^&^& pnpm install ^&^& pnpm dev
 )
+if exist "web" (
+    echo 安装前端依赖（web\ 目录）...
+    cd web
+    call pnpm install
+    if %errorlevel% neq 0 (
+        echo [警告] pnpm install 可能需要运行：pnpm approve-builds esbuild
+    ) else (
+        echo [OK] 前端依赖安装完成
+    )
+    cd ..
+) else (
+    echo [跳过] web\ 目录不存在
+)
+:after_frontend
 echo.
 
 echo ========================================

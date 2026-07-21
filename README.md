@@ -531,6 +531,27 @@ pip install czsc
 pip install darts
 ```
 
+**C. 前端依赖（Node.js / pnpm）** ⚠️ **必须单独安装，`package.json` 在 `web/` 子目录中**
+
+> ⚠️ **常见错误**：在项目根目录运行 `pnpm install` 会报 `ERR_PNPM_NO_PKG_MANIFEST`，
+> 因为根目录没有 `package.json`。**必须先进入 `web/` 子目录**。
+
+```bash
+# ① 确认 Node.js 已装（需要 22.x）
+node --version    # 应显示 v22.x.x
+
+# ② 安装 pnpm（若尚未安装）
+npm install -g pnpm
+pnpm --version    # 确认可用
+
+# ③ ⚠️ 进入 web/ 子目录再操作（package.json 在这里）
+cd web
+pnpm install      # 首次安装前端依赖（约 1-2 分钟）
+pnpm dev          # 启动开发服务器 → http://localhost:5173
+```
+
+> Windows 用户也可直接双击根目录的 `install-web.bat` 一键完成上述步骤。
+
 **依赖分层（装多少自己定）**
 
 | 层 | 包含 | 不装会怎样 |
@@ -567,18 +588,19 @@ cp .env.example .env
 
 ### 7.6 启动
 
+> **前置**：后端依赖见 §7.2（A/B），前端依赖见 §7.2-C（`cd web && pnpm install`，首次必须）。
+
 ```bash
 # 后端（另开终端，常驻）
 uvicorn api.main:app --port 8000 --reload
 
-# 前端（另开终端）
+# 前端（另开终端）—— ⚠️ 必须在 web/ 子目录下
 cd web
-pnpm install          # 首次
 pnpm dev              # 开发：http://localhost:5173
 # 或生产构建后静态托管：
 pnpm build && pnpm preview
 ```
-浏览器开 `http://localhost:5173` → 6 页实时读 API。前端 `vite` 已配置 `/api` 代理到 `localhost:8000`。
+浏览器开 `http://localhost:5173` → 看板实时读 API。前端 `vite` 已配置 `/api` 代理到 `localhost:8000`。
 
 ---
 
