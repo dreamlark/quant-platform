@@ -1,6 +1,7 @@
 """Dashboard 路由：每日简报聚合（首页落地数据）。"""
 from __future__ import annotations
 
+import datetime as dt
 import math
 import os
 from typing import Optional
@@ -36,8 +37,18 @@ def dashboard(date: Optional[str] = Query(None)):
     repo = get_repository()
     try:
         target = resolve_date(repo, date, "signal")
-    except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
+    except ValueError:
+        # 首次/无数据：返回安全占位（HTTP 200），前端渲染空态而非 404 白屏
+        return DashboardSummary(
+            date=str(dt.date.today()),
+            market_latest_date=None,
+            market_temperature=50,
+            brief=None,
+            top_signals=[],
+            sectors=[],
+            watchlist_alerts=[],
+            market_sentiment=MarketSentimentView(available=False),
+        )
 
     signals = repo.load_signals(target)
     sectors = repo.load_sector(target)

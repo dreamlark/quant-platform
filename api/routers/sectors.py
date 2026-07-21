@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Query
 
 from api.database import get_repository
 from api.schemas import SectorOut
@@ -18,8 +18,9 @@ def sector_rotation(date: Optional[str] = Query(None)):
     repo = get_repository()
     try:
         target = resolve_date(repo, date, "signal")
-    except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
+    except ValueError:
+        # 首次/无数据：返回空列表（HTTP 200），避免 404 导致板块轮动页白屏
+        return []
     s = repo.load_sector(target)
     if s.empty:
         return []

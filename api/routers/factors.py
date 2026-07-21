@@ -18,8 +18,9 @@ def factor_health(date: Optional[str] = Query(None)):
     repo = get_repository()
     try:
         target = resolve_date(repo, date, "signal")
-    except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
+    except ValueError:
+        # 首次/无数据：返回空列表（HTTP 200），避免 404 导致因子健康页白屏
+        return []
     h = repo.load_health(date=target)
     if h.empty:
         return []
