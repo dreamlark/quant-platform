@@ -140,3 +140,56 @@ def build_market_meta(
             }
         )
     return pd.DataFrame(rows)
+
+
+def fetch_all_a_codes() -> pd.DataFrame:
+    """全量 A 股代码 + 名称（沪/深/北交所），供「股票池」主表构建。
+
+    数据源（均经 akshare，单请求返回全部，失败整体降级）：
+    - ``ak.stock_info_a_code_name()``  沪深 A 股
+    - ``ak.stock_info_bj_name_code()`` 北交所
+
+    返回 ``DataFrame[code(6位), name, exchange(sh/sz/bj)]``；两个源都失败时抛 RuntimeError。
+    """
+    import akshare as ak
+
+    frames: List[pd.DataFrame] = []
+    try:
+        a = ak.stock_info_a_code_name()
+        frames.append(a)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(f"akshare 沪深A股列表获取失败：{exc}")
+    try:
+        bj = ak.stock_info_bj_name_code()
+        frames.append(bj)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(f"akshare 北交所列表获取失败：{exc}")
+    if not frames:
+        raise RuntimeError("无法获取任何股票列表（akshare 不可用）")
+
+    df = pd.concat(frames, ignore_index=True)
+    # 列归一：兼容 code/symbol + name
+    colmap = {}
+    for c in df.columns:
+        cl = str(c).lower()
+        if cl in ("code", "symbol"):
+            colmap[c] = "code"
+        elif cl == "name":
+            colmap[c] = "name"
+    df = df.rename(columns=colmap)
+    if "code" not in df.columns or "name" not in df.columns:
+        raise RuntimeError(f"股票列表列异常：{list(df.columns)}")
+
+    out = []
+    for _, r in df.iterrows():
+        code = str(r.get("code", "")).strip().zfill(6)
+        if not code.isdigit() or len(code) != 6:
+            continue
+        name = str(r.get("name", code))
+        ex = (
+            "sh" if code.startswith("6")
+            else "bj" if code.startswith(("8", "4"))
+            else "sz"
+        )
+        out.append({"code": code, "name": name, "exchange": ex})
+    return pd.DataFrame(out)

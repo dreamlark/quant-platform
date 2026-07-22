@@ -16,35 +16,60 @@
 from __future__ import annotations
 
 import datetime as dt
+import re
 import threading
 from typing import Iterable, Optional, Sequence
 
 import duckdb
 import pandas as pd
 
-from storage.schema import DATE_COLUMNS, init_schema
+from storage.schema import DATE_COLUMNS, TABLE_DDL, init_schema
 
-_DATE_SET = set(DATE_COLUMNS)
+_DATE_SET = set(DATE_COLUMNS)  # 兼容旧引用（读取侧已改用 _DATE_COLS 精确区分）
+
+# 写入侧按 DDL 精确区分 DATE / TIMESTAMP，避免把 TIMESTAMP 误截成日期。
+_DATE_COLS: set[str] = set()
+_TS_COLS: set[str] = set()
+for _t, _ddl in TABLE_DDL.items():
+    for _line in _ddl.splitlines():
+        _m = re.match(r"\s*([a-zA-Z_]\w*)\s+(DATE|TIMESTAMP)", _line, re.IGNORECASE)
+        if not _m:
+            continue
+        (_DATE_COLS if _m.group(2).upper() == "DATE" else _TS_COLS).add(
+            _m.group(1).lower()
+        )
 
 
 def _coerce_dates(df: pd.DataFrame) -> pd.DataFrame:
-    """将名为 date/created_at 的列统一转为 python date（对象列），便于 DuckDB DATE。"""
+    """写入前按 DDL 把 DATE 列统一为 python date、TIMESTAMP 列统一为 datetime64。
+
+    - DATE 列（date / list_date ...）：datetime64 -> .dt.date，字符串 -> to_datetime().dt.date，
+      便于 DuckDB DATE。
+    - TIMESTAMP 列（created_at / updated_at ...）：确保 datetime64，绝不截断时间。
+    - 其余列不动，交由调用方/register 推断。
+    """
     df = df.copy()
     for col in df.columns:
-        if col in _DATE_SET:
-            series = df[col]
+        series = df[col]
+        if col in _DATE_COLS:
             if pd.api.types.is_datetime64_any_dtype(series):
                 df[col] = series.dt.date
             elif len(series) and isinstance(series.iloc[0], str):
-                df[col] = pd.to_datetime(series).dt.date
+                df[col] = pd.to_datetime(series, errors="coerce").dt.date
+        elif col in _TS_COLS:
+            if not pd.api.types.is_datetime64_any_dtype(series):
+                df[col] = pd.to_datetime(series, errors="coerce")
     return df
 
 
 def _read_dates(df: pd.DataFrame) -> pd.DataFrame:
-    """读取后把 date/created_at 从 datetime 转回 python date，便于 JSON 序列化。"""
+    """读取后把真正的 DATE 列从 datetime 转回 python date，便于 JSON 序列化。
+
+    TIMESTAMP 列（created_at/updated_at）保持 datetime64，保留时间信息。
+    """
     df = df.copy()
     for col in df.columns:
-        if col in _DATE_SET and pd.api.types.is_datetime64_any_dtype(df[col]):
+        if col in _DATE_COLS and pd.api.types.is_datetime64_any_dtype(df[col]):
             df[col] = df[col].dt.date
     return df
 

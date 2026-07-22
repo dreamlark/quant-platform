@@ -124,6 +124,21 @@ TABLE_DDL: Dict[str, str] = {
             PRIMARY KEY (date, code)
         );
     """,
+    "stock_pool": """
+        CREATE TABLE IF NOT EXISTS stock_pool (
+            code        VARCHAR,    -- 6 位代码（主键）
+            name        VARCHAR,
+            industry    VARCHAR,    -- 申万一级行业（可选）
+            exchange    VARCHAR,    -- sh / sz / bj
+            list_date   DATE,       -- 上市日期（可选）
+            delisted    BOOLEAN,    -- 是否已退市
+            source      VARCHAR,    -- akshare / import / manual
+            selected    BOOLEAN,    -- 是否纳入当前运行子集（用户自选）
+            created_at  TIMESTAMP,
+            updated_at  TIMESTAMP,
+            PRIMARY KEY (code)
+        );
+    """,
     "watchlist": """
         CREATE TABLE IF NOT EXISTS watchlist (
             code        VARCHAR,
@@ -219,6 +234,7 @@ TABLE_DDL: Dict[str, str] = {
 TABLE_ORDER: List[str] = [
     "daily_bars",
     "universe",
+    "stock_pool",
     "factor_values",
     "factor_health",
     "predict_values",

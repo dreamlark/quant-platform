@@ -13,7 +13,7 @@ import pandas as pd
 from storage.duckdb_client import DuckDBClient
 
 # 行情库表
-_MARKET_TABLES = {"daily_bars", "universe"}
+_MARKET_TABLES = {"daily_bars", "universe", "stock_pool"}
 # 分析库表
 _ANALYTICS_TABLES = {
     "factor_values",
@@ -97,6 +97,62 @@ class Repository:
             sql += " AND in_universe = ?"
             params.append(in_universe)
         return self._read("universe", sql, params)
+
+    # ===== 股票池 stock_pool（全量候选主表 + 用户自选子集）=====
+    def save_pool(self, df: pd.DataFrame) -> int:
+        """upsert 股票池（按 code）。调用方负责填 selected/created_at 等列。"""
+        if df is None or len(df) == 0:
+            return 0
+        df = df.copy()
+        if "updated_at" not in df.columns:
+            df["updated_at"] = dt.datetime.now()
+        return self._upsert("stock_pool", df, ["code"])
+
+    def load_pool(
+        self,
+        selected: Optional[bool] = None,
+        query: Optional[str] = None,
+        limit: int = 200,
+        offset: int = 0,
+    ) -> pd.DataFrame:
+        sql = "SELECT * FROM stock_pool WHERE 1=1"
+        params: List = []
+        if selected is not None:
+            sql += " AND selected = ?"
+            params.append(bool(selected))
+        if query:
+            sql += " AND (code LIKE ? OR name LIKE ?)"
+            like = f"%{query}%"
+            params.extend([like, like])
+        sql += " ORDER BY code LIMIT ? OFFSET ?"
+        params.extend([limit, offset])
+        return self._read("stock_pool", sql, params)
+
+    def count_pool(self, selected: Optional[bool] = None) -> int:
+        sql = "SELECT COUNT(*) FROM stock_pool"
+        params: List = []
+        if selected is not None:
+            sql += " WHERE selected = ?"
+            params.append(bool(selected))
+        return int(self._client("stock_pool").execute(sql, params).fetchone()[0])
+
+    def set_pool_selected(self, codes: List[str], selected: bool) -> int:
+        """批量设置 selected 标记（用户自选子集）。返回影响行数。"""
+        if not codes:
+            return 0
+        placeholders = ",".join(["?"] * len(codes))
+        sql = (
+            f"UPDATE stock_pool SET selected = ?, updated_at = ? "
+            f"WHERE code IN ({placeholders})"
+        )
+        params = [bool(selected), dt.datetime.now()] + list(codes)
+        self._client("stock_pool").execute(sql, params).fetchall()
+        return len(codes)
+
+    def pool_selected_codes(self) -> List[str]:
+        """返回当前被选中（selected=TRUE）的股票代码列表。"""
+        df = self._read("stock_pool", "SELECT code FROM stock_pool WHERE selected = TRUE ORDER BY code")
+        return df["code"].tolist() if not df.empty else []
 
     # ===== 因子 factor_values (long) =====
     def save_factor_long(self, df: pd.DataFrame) -> int:
