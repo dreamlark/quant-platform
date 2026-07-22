@@ -423,3 +423,42 @@ export function migratePaths(newDataDir: string) {
     { params: { new_data_dir: newDataDir } }
   );
 }
+
+// —— 通用数据浏览（只读）——
+export interface DataTableMeta {
+  db: string; // market / analytics
+  name: string; // 表名
+  rows: number | null; // 行数
+  columns: string[]; // 字段名
+  latest_date: string | null; // 最新日期（含 date 列时）
+}
+export interface DataQueryResult {
+  table: string;
+  columns: string[];
+  rows: Record<string, any>[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+// 列出所有数据表元信息（库 / 表名 / 行数 / 字段 / 最新日期）
+export function getDataTables() {
+  return apiGet<{ tables: DataTableMeta[] }>('/data/tables');
+}
+
+// 查阅某表明细，支持按 code / date 过滤 + 分页
+export function queryDataTable(params: {
+  table: string;
+  code?: string | null;
+  date?: string | null;
+  limit?: number;
+  offset?: number;
+}) {
+  const qs = new URLSearchParams();
+  qs.append('table', params.table);
+  if (params.code) qs.append('code', params.code);
+  if (params.date) qs.append('date', params.date);
+  if (params.limit != null) qs.append('limit', String(params.limit));
+  if (params.offset != null) qs.append('offset', String(params.offset));
+  return apiGet<DataQueryResult>(`/data/query?${qs.toString()}`);
+}

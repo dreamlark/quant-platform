@@ -2,9 +2,9 @@ import React, { useEffect, useState } from 'react';
 import {
   Card, Row, Col, Table, Typography, Tag, Spin, Statistic, Empty,
   Button, Space, Progress, Alert, Descriptions, Divider, Switch, InputNumber,
-  Tooltip, Modal, message, Select,
+  Tooltip, Modal, message, Select, Input,
 } from 'antd';
-import { api } from '../api/client';
+import { api, getDataTables, queryDataTable, DataTableMeta, DataQueryResult, errMsg } from '../api/client';
 import { COLORS } from '../theme';
 
 const { Title, Text, Paragraph } = Typography;
@@ -63,6 +63,16 @@ export default function DataManagement() {
 
   // 清库确认
   const [clearTarget, setClearTarget] = useState<string | null>(null); // 'market' | 'analytics'
+
+  // 数据浏览（查阅明细）
+  const [tables, setTables] = useState<DataTableMeta[]>([]);
+  const [selectedTable, setSelectedTable] = useState<string>('');
+  const [codeFilter, setCodeFilter] = useState<string>('');
+  const [dateFilter, setDateFilter] = useState<string>('');
+  const [queryResult, setQueryResult] = useState<DataQueryResult | null>(null);
+  const [queryLoading, setQueryLoading] = useState(false);
+  const [queryError, setQueryError] = useState<string | null>(null);
+  const PAGE_SIZE = 200;
 
   const loadData = () => {
     setLoading(true);
@@ -145,6 +155,43 @@ export default function DataManagement() {
       setClearTarget(null);
     }
   };
+
+  // 加载数据表清单
+  const loadTables = () => {
+    getDataTables()
+      .then((r) => {
+        const list = r.tables || [];
+        setTables(list);
+        if (!selectedTable && list.length) setSelectedTable(list[0].name);
+      })
+      .catch((e: any) => message.error('加载数据表失败：' + (e?.message || '未知')));
+  };
+
+  // 查阅某表数据（支持 code/date 过滤 + 分页）
+  const runQuery = (offset = 0) => {
+    if (!selectedTable) {
+      message.warning('请先选择数据表');
+      return;
+    }
+    setQueryLoading(true);
+    setQueryError(null);
+    queryDataTable({
+      table: selectedTable,
+      code: codeFilter.trim() || null,
+      date: dateFilter.trim() || null,
+      limit: PAGE_SIZE,
+      offset,
+    })
+      .then((r) => setQueryResult(r))
+      .catch((e: any) => setQueryError(errMsg(e)))
+      .finally(() => setQueryLoading(false));
+  };
+
+  // 初次进入加载数据表清单
+  useEffect(() => {
+    loadTables();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   if (loading) return <div className="page"><Spin size="large" /></div>;
 
@@ -311,6 +358,85 @@ export default function DataManagement() {
             多源价格差异超过阈值时记录分歧日志。
           </Text>
         </div>
+      </Card>
+
+      {/* 数据浏览（查阅明细） */}
+      <Card className="metric-card" title="数据浏览（查阅明细）" style={{ marginTop: 16 }}>
+        <Space wrap style={{ marginBottom: 12 }}>
+          <Select
+            style={{ width: 240 }}
+            placeholder="选择数据表"
+            value={selectedTable || undefined}
+            onChange={(v: string) => {
+              setSelectedTable(v);
+              setQueryResult(null);
+            }}
+            options={tables.map((t) => ({
+              label: `${t.db} · ${t.name}（${t.rows ?? '-'} 行）`,
+              value: t.name,
+            }))}
+          />
+          <Input
+            style={{ width: 150 }}
+            placeholder="code 过滤（如 000001）"
+            value={codeFilter}
+            onChange={(e) => setCodeFilter(e.target.value)}
+            allowClear
+          />
+          <Input
+            style={{ width: 160 }}
+            placeholder="date 过滤 YYYY-MM-DD"
+            value={dateFilter}
+            onChange={(e) => setDateFilter(e.target.value)}
+            allowClear
+          />
+          <Button type="primary" loading={queryLoading} onClick={() => runQuery(0)}>
+            查询
+          </Button>
+          <Button
+            onClick={() => {
+              setQueryResult(null);
+              setCodeFilter('');
+              setDateFilter('');
+            }}
+          >
+            重置
+          </Button>
+        </Space>
+
+        {queryError && (
+          <Alert style={{ marginBottom: 12 }} type="error" showIcon message="查询失败" description={queryError} />
+        )}
+
+        {queryResult ? (
+          <>
+            <div style={{ marginBottom: 8, fontSize: 12, color: 'var(--text-secondary)' }}>
+              共 {queryResult.total} 行 · 显示第 {queryResult.offset + 1}~
+              {queryResult.offset + queryResult.rows.length} 行
+            </div>
+            <Table
+              size="small"
+              scroll={{ x: 'max-content' }}
+              pagination={{
+                current: Math.floor(queryResult.offset / PAGE_SIZE) + 1,
+                pageSize: PAGE_SIZE,
+                total: queryResult.total,
+                showSizeChanger: false,
+                onChange: (p: number) => runQuery((p - 1) * PAGE_SIZE),
+              }}
+              columns={queryResult.columns.map((c) => ({
+                title: c,
+                dataIndex: c,
+                key: c,
+                ellipsis: true,
+              }))}
+              dataSource={queryResult.rows}
+              rowKey={(_: any, i?: number) => String(i ?? 0)}
+            />
+          </>
+        ) : (
+          !queryLoading && <Empty description="选择数据表后点击「查询」查阅明细" />
+        )}
       </Card>
 
       {/* 数据使用指南 */}
