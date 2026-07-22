@@ -91,25 +91,30 @@ class Orchestrator:
         self._INGEST_BATCH = 50
 
     # ---- 步骤 ----------------------------------------------------
-    def step_ingest(self, start: dt.date, end: dt.date) -> pd.DataFrame:
+    def step_ingest(self, start: dt.date, end: dt.date, force: bool = False) -> pd.DataFrame:
         """拉取并复权落库（多源冗余 + 后复权计算价）。
 
         断点续跑：若某标的在库中已含 ``end`` 当日及之后的数据，则跳过重新拉取
         （避免每轮重跑都重复请求全部历史）；单标的取数异常不影响其余标的。
         增量落库：每满 ``_INGEST_BATCH`` 只即调 ``save_bars``，避免长时运行的进程
         被环境掐断时丢失全部已取数据（重跑时凭库中 max(date) 续跑）。
+
+        ``force=True``（按日期补充）：跳过「已新鲜」优化，强制重新拉取指定区间，
+        用于补跑历史缺口或指定交易日。
         """
         if self.source is None:
             raise RuntimeError("未配置数据源，无法 ingest（冒烟可预置 bars 到仓库）")
         # 预查询各标的已入库最大日期，用于跳过已新鲜的标的
+        # force=True（按日期补充）时跳过该优化，强制重新拉取指定区间
         fresh: set = set()
-        try:
-            md = self.repo.load_bars(codes=self.codes)
-            if not md.empty:
-                mx = md.groupby("code")["date"].max()
-                fresh = set(mx[mx >= end].index)
-        except Exception as exc:  # noqa: BLE001
-            logger.debug(f"ingest 续跑预查询跳过：{exc}")
+        if not force:
+            try:
+                md = self.repo.load_bars(codes=self.codes)
+                if not md.empty:
+                    mx = md.groupby("code")["date"].max()
+                    fresh = set(mx[mx >= end].index)
+            except Exception as exc:  # noqa: BLE001
+                logger.debug(f"ingest 续跑预查询跳过：{exc}")
         batch: List[pd.DataFrame] = []
         skipped = 0
         saved = 0

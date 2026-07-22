@@ -26,7 +26,7 @@ from api.middleware import (
     SanitizedJSONResponse,
     register_exception_handlers,
 )
-from api.routers import admin, dashboard, data, factors, hotspot, monitor, sectors, settings, stocks, watchlist
+from api.routers import admin, dashboard, data, factors, hotspot, monitor, pool, sectors, settings, stocks, watchlist
 
 app = FastAPI(
     title="A 股日频量化分析平台 API",
@@ -54,6 +54,7 @@ app.include_router(sectors.router)
 app.include_router(stocks.router)
 app.include_router(watchlist.router)
 app.include_router(data.router)
+app.include_router(pool.router)
 app.include_router(admin.router)
 app.include_router(monitor.router)
 app.include_router(hotspot.router)

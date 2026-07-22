@@ -19,7 +19,7 @@ import time
 import uuid
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Header
+from fastapi import APIRouter, Depends, HTTPException, Header, Query
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 if ROOT not in sys.path:
@@ -128,6 +128,7 @@ class UpdateManager:
         self._scheduler = None
         self._thread: threading.Thread | None = None
         self._run_meta: dict = {"run_id": None, "started_at": None, "trigger": "manual"}
+        self._target_date: Optional[str] = None  # 按日期补充模式的目标交易日
         # —— 实时运行日志缓冲（前端轮询展示）——
         self._log_lock = threading.Lock()
         self._logs: list[dict] = []
@@ -163,22 +164,39 @@ class UpdateManager:
         # 复用 api.database 的单例 Repository，不再重复 build_repository 打开同一 DuckDB 文件
         repo = get_repository()
 
-        # 沪深300 成分（akshare，失败兜底 universe 表）
+        # 优先使用「股票池」用户自选子集（selected=TRUE）；为空时回退沪深300（向后兼容）
         codes, names = [], []
         try:
-            import akshare as ak
+            selected = repo.pool_selected_codes()
+            if selected:
+                pdf = repo.market.read(
+                    f"SELECT code, name FROM stock_pool WHERE code IN ({','.join(['?'] * len(selected))})",
+                    selected,
+                )
+                name_map = dict(zip(pdf["code"].astype(str), pdf["name"].astype(str)))
+                codes = [str(c).zfill(6) for c in selected]
+                names = [str(name_map.get(c, c)) for c in codes]
+                self._log("info", f"股票池选定子集：{len(codes)} 只，作为运行域", "", "开始")
+        except Exception as exc:  # noqa: BLE001
+            self._log("warn", f"读取股票池选定子集失败，回退沪深300：{exc}", "", "开始")
+            codes, names = [], []
 
-            df = ak.index_stock_cons_csindex(symbol="000300")[
-                ["成分券代码", "成分券名称"]
-            ].rename(columns={"成分券代码": "code", "成分券名称": "name"})
-            codes = df["code"].astype(str).str.zfill(6).tolist()
-            names = df["name"].astype(str).tolist()
-        except Exception:
-            rows = repo.market.execute(
-                "SELECT DISTINCT code, name FROM universe WHERE in_universe=TRUE"
-            ).fetchall()
-            codes = [str(r[0]).zfill(6) for r in rows]
-            names = [str(r[1]) for r in rows]
+        # 沪深300 成分（akshare，失败兜底 universe 表）——仅当无自选子集时
+        if not codes:
+            try:
+                import akshare as ak
+
+                df = ak.index_stock_cons_csindex(symbol="000300")[
+                    ["成分券代码", "成分券名称"]
+                ].rename(columns={"成分券代码": "code", "成分券名称": "name"})
+                codes = df["code"].astype(str).str.zfill(6).tolist()
+                names = df["name"].astype(str).tolist()
+            except Exception:
+                rows = repo.market.execute(
+                    "SELECT DISTINCT code, name FROM universe WHERE in_universe=TRUE"
+                ).fetchall()
+                codes = [str(r[0]).zfill(6) for r in rows]
+                names = [str(r[1]) for r in rows]
 
         meta = build_market_meta(codes, names)
         stock_list = meta[["code", "name", "industry", "mv"]]
@@ -273,20 +291,33 @@ class UpdateManager:
     def _run_once(self) -> None:
         orch, repo, _ = self._build_orch()
         today = dt.date.today()
-        start = today - dt.timedelta(days=300)
+        target_date = self._target_date
+        # 按日期补充模式：仅拉取并重算指定交易日（force 跳过「已新鲜」误判）
+        if target_date:
+            try:
+                td = dt.date.fromisoformat(target_date)
+            except ValueError:
+                td = today
+                target_date = None
+            start = td
+            backfill = True
+        else:
+            td = today
+            start = today - dt.timedelta(days=300)
+            backfill = False
         step_fns = {
-            "ingest": lambda: orch.step_ingest(start, today),
-            "universe": lambda: orch.step_universe(today),
-            "factors": lambda: orch.step_factors(today),
-            "sentiment": lambda: orch.step_sentiment(today),
-            "predict": lambda: orch.step_predict(today),
-            "health": lambda: orch.step_health(today),
-            "neutralize": lambda: orch.step_neutralize(today),
-            "fusion": lambda: orch.step_fusion(today),
-            "sector": lambda: orch.step_sector(today),
-            "market_sentiment": lambda: orch.step_market_sentiment(today),
-            "llm": lambda: orch.step_llm(today),
-            "backtest": lambda: orch.step_backtest(today),
+            "ingest": lambda: orch.step_ingest(start, td, force=backfill),
+            "universe": lambda: orch.step_universe(td),
+            "factors": lambda: orch.step_factors(td),
+            "sentiment": lambda: orch.step_sentiment(td),
+            "predict": lambda: orch.step_predict(td),
+            "health": lambda: orch.step_health(td),
+            "neutralize": lambda: orch.step_neutralize(td),
+            "fusion": lambda: orch.step_fusion(td),
+            "sector": lambda: orch.step_sector(td),
+            "market_sentiment": lambda: orch.step_market_sentiment(td),
+            "llm": lambda: orch.step_llm(td),
+            "backtest": lambda: orch.step_backtest(td),
         }
 
         # 标记已知耗时的步骤（这些步骤使用 _run_with_heartbeat 注入心跳日志）
@@ -301,7 +332,8 @@ class UpdateManager:
         except Exception as exc:
             self._log("error", f"拉取行情失败：{exc}", "ingest", "拉取最新日K")
             raise RuntimeError(f"步骤「ingest」拉取行情失败：{exc}") from exc
-        target = repo.market.execute("SELECT max(date) FROM daily_bars").fetchone()[0]
+        # 补充模式直接用指定日作为目标（即便该日取数失败，也按其重算下游）
+        target = td if backfill else repo.market.execute("SELECT max(date) FROM daily_bars").fetchone()[0]
         orch.source = None  # 后续不再重复 ingest
         self.state["progress"] = 1  # ingest 完成，进度从 0→1
         self.state["last_success_date"] = str(target)
@@ -344,7 +376,7 @@ class UpdateManager:
         self._log("success", f"全部步骤完成，目标日 {target}", "", "完成")
 
     # -------- 触发（防并发）--------
-    def trigger(self, source: str = "manual") -> bool:
+    def trigger(self, source: str = "manual", target_date: Optional[str] = None) -> bool:
         with self._lock:
             if self.state["status"] == "running":
                 return False
@@ -352,16 +384,21 @@ class UpdateManager:
             self.state["progress"] = 0
             self.state["started_at"] = dt.datetime.now().isoformat(timespec="seconds")
             self.state["last_error"] = None
-            self.state["message"] = "开始更新..."
+            self.state["message"] = (
+                f"开始按 {target_date} 补充数据..." if target_date
+                else "开始更新..."
+            )
             self.state["current_step"] = "ingest"
             # 新一轮：清空旧日志，从本次运行开始记录
             with self._log_lock:
                 self._logs = []
             self._log("info", f"触发数据更新（来源：{source}）", "", "开始")
+            self._target_date = target_date
             self._run_meta = {
                 "run_id": uuid.uuid4().hex[:12],
                 "started_at": self.state["started_at"],
                 "trigger": source,
+                "target_date": target_date,
             }
             self._thread = threading.Thread(target=self._worker, daemon=True)
             self._thread.start()
@@ -383,6 +420,7 @@ class UpdateManager:
             self.state["finished_at"] = finished_at
             self.state["current_step"] = ""
             self.state["step_started_at"] = None  # 运行结束，清除卡死检测时间戳
+            self._target_date = None  # 无论成败都清空补充目标，避免下次误用
         # 落运行历史（与 DuckDB 写者解耦，独立 JSONL）
         try:
             started = dt.datetime.fromisoformat(self._run_meta["started_at"])
@@ -446,12 +484,26 @@ mgr = UpdateManager()
 
 
 @router.post("/update")
-def update(_: None = Depends(require_admin)):
-    """触发一轮数据更新与预测（异步）。已在运行时返回 409。"""
-    ok = mgr.trigger()
+def update(
+    target_date: Optional[str] = Query(
+        None,
+        description="指定补充的目标交易日(YYYY-MM-DD)，留空=全量更新至今天",
+    )
+):
+    """触发一轮数据更新与预测（异步）。已在运行时返回 409。
+
+    ``target_date`` 命中时进入「按日期补充」模式：仅拉取并重算该交易日
+    （force 取数，跳过历史缺口的「已新鲜」误判），便于补跑错过的交易日。
+    """
+
+    ok = mgr.trigger(target_date=target_date)
     if not ok:
         raise HTTPException(status_code=409, detail="已有更新任务在运行中，请稍候")
-    return {"status": "running", "message": "已触发数据更新"}
+    return {
+        "status": "running",
+        "message": "已触发数据更新",
+        "target_date": target_date,
+    }
 
 
 @router.get("/status")
