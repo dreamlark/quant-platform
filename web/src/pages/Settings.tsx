@@ -1,20 +1,20 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import {
   Card, Form, Input, Button, Select, InputNumber, Switch, Divider,
   Typography, message, Spin, Tabs, Space, Tag, Modal, Table, Alert,
-  Row, Col, Tooltip, ColorPicker,
+  Row, Col,
 } from 'antd';
 import {
   SettingOutlined, KeyOutlined, DatabaseOutlined, ClockCircleOutlined,
   FireOutlined, BgColorsOutlined, ApiOutlined, FolderOpenOutlined,
-  CheckCircleOutlined, CloseCircleOutlined, ExclamationCircleOutlined,
+  CheckCircleOutlined, ExclamationCircleOutlined,
 } from '@ant-design/icons';
 import {
   getSettings, updateSettings, testLLM, getPathsInfo, migratePaths,
   type SettingsView, type PathInfo,
 } from '../api/client';
 
-const { Title, Text, Paragraph } = Typography;
+const { Title, Text } = Typography;
 const { Option } = Select;
 
 const THEME_OPTIONS = [

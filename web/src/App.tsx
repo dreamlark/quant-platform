@@ -1,5 +1,5 @@
-import React, { lazy, Suspense, useState, useEffect } from 'react';
-import { Layout, Menu, ConfigProvider, Typography, Button, Tooltip } from 'antd';
+import { lazy, Suspense, useState, useEffect } from 'react';
+import { Layout, Menu, ConfigProvider, Button, Tooltip } from 'antd';
 import {
   DashboardOutlined,
   FunctionOutlined,
@@ -13,7 +13,7 @@ import {
   FundOutlined,
 } from '@ant-design/icons';
 import { Routes, Route, useNavigate, useLocation, Navigate } from 'react-router-dom';
-import { darkTheme, getTheme, type ThemeMode, themeCSSVars } from './theme';
+import { getTheme, type ThemeMode, themeCSSVars } from './theme';
 import { PageLoading } from './components/common';
 import ErrorBoundary from './components/ErrorBoundary';
 

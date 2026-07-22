@@ -1,11 +1,17 @@
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
-  Card, Row, Col, Table, Typography, Tag, Spin, Statistic, Empty,
-  Button, Space, Progress, Alert, Descriptions, Divider, Switch, InputNumber,
-  Tooltip, Modal, message, Select,
+  Card, Row, Col, Table, Typography, Tag, Spin, Empty,
+  Button, Space, Alert, Descriptions, Divider, Switch,
+  Tooltip, Modal, message, Select, DatePicker, Upload, Radio, Input,
 } from 'antd';
-import { api } from '../api/client';
-import { COLORS } from '../theme';
+import {
+  api,
+  triggerUpdate, getDataTables, DataTableMeta,
+  PoolRow, PoolBuildStatus, getPoolList, buildPool, getPoolBuildStatus,
+  selectPool, deselectPool, addPool,
+  importData, exportData,
+} from '../api/client';
+import dayjs from 'dayjs';
 
 const { Title, Text, Paragraph } = Typography;
 
@@ -50,12 +56,17 @@ const SOURCE_OPTIONS = [
   { label: 'baostock（冗余兜底）', value: 'baostock' },
 ];
 
+const POOL_PAGE_SIZE = 50;
+
 export default function DataManagement() {
   const [overview, setOverview] = useState<DataOverview | null>(null);
   const [loading, setLoading] = useState(true);
   const [importing, setImporting] = useState(false);
   const [importingBrief, setImportingBrief] = useState(false);
   const [lastImport, setLastImport] = useState<ImportResult | null>(null);
+
+  // 按日期补充
+  const [backfillDate, setBackfillDate] = useState<dayjs.Dayjs | null>(null);
 
   // 数据源优先级编辑状态
   const [sourcePriority, setSourcePriority] = useState<string[]>(['mootdx', 'akshare', 'baostock']);
@@ -64,6 +75,34 @@ export default function DataManagement() {
   // 清库确认
   const [clearTarget, setClearTarget] = useState<string | null>(null); // 'market' | 'analytics'
 
+  // —— 数据表元信息（导入/导出目标表选择）——
+  const [tables, setTables] = useState<DataTableMeta[]>([]);
+  useEffect(() => {
+    getDataTables().then((r) => setTables(r.data.tables)).catch(() => setTables([]));
+  }, []);
+
+  // —— 数据导入 / 导出（CSV / Parquet）——
+  const [importFile, setImportFile] = useState<File | null>(null);
+  const [importFileList, setImportFileList] = useState<any[]>([]);
+  const [ioTable, setIoTable] = useState<string | null>(null);
+  const [importMode, setImportMode] = useState<'upsert' | 'replace'>('upsert');
+  const [ioBusy, setIoBusy] = useState(false);
+  const [ioHint, setIoHint] = useState<string | null>(null);
+
+  // —— 股票池（全量候选主表 + 自选子集）——
+  const [poolRows, setPoolRows] = useState<PoolRow[]>([]);
+  const [poolTotal, setPoolTotal] = useState(0);
+  const [poolSelectedTotal, setPoolSelectedTotal] = useState(0);
+  const [poolLoading, setPoolLoading] = useState(false);
+  const [poolPage, setPoolPage] = useState(1);
+  const [poolQuery, setPoolQuery] = useState('');
+  const [poolOnlySelected, setPoolOnlySelected] = useState(false);
+  const [poolBuild, setPoolBuild] = useState<PoolBuildStatus | null>(null);
+  const [poolBusy, setPoolBusy] = useState(false);
+  const [poolHint, setPoolHint] = useState<string | null>(null);
+  const [addCode, setAddCode] = useState('');
+  const [addName, setAddName] = useState('');
+
   const loadData = () => {
     setLoading(true);
     /* 走 monitor/overview 获取数据状态 + 单独查文件信息 */
@@ -71,7 +110,7 @@ export default function DataManagement() {
       api.get('/monitor/overview').catch(() => null),
       api.get('/admin/status').catch(() => null),
     ])
-      .then(([monResp, statusResp]) => {
+      .then(([monResp]) => {
         const mon = monResp?.data;
         if (mon) {
           setOverview({
@@ -124,6 +163,30 @@ export default function DataManagement() {
     }
   };
 
+  // 按日期补充：触发 update 并携带 target_date，仅重算指定交易日
+  const handleBackfill = async () => {
+    if (!backfillDate) {
+      message.warning('请先选择要补充的交易日');
+      return;
+    }
+    const d = backfillDate.format('YYYY-MM-DD');
+    setImporting(true);
+    setLastImport(null);
+    try {
+      await triggerUpdate(d);
+      message.success(`已触发按 ${d} 补充数据`);
+      setLastImport({ status: 'triggered', imported_rows: 0, duration_s: 0, target_date: d });
+    } catch (e: any) {
+      if (e?.response?.status === 409) {
+        message.warning('已有任务在运行中');
+      } else {
+        message.error('触发失败：' + (e?.message || '未知'));
+      }
+    } finally {
+      setImporting(false);
+    }
+  };
+
   const handleBriefRegen = async () => {
     setImportingBrief(true);
     try {
@@ -145,6 +208,113 @@ export default function DataManagement() {
       setClearTarget(null);
     }
   };
+
+  // —— 数据导入 / 导出 ——
+  const doExport = (table: string | null, format: 'csv' | 'parquet') => {
+    if (!table) { setIoHint('请先选择要导出的数据表'); return; }
+    setIoBusy(true);
+    setIoHint(null);
+    exportData(table, format)
+      .then(() => setIoHint(`已导出 ${table}.${format}`))
+      .catch((e: any) => setIoHint('导出失败：' + (e?.message || '未知错误')))
+      .finally(() => setIoBusy(false));
+  };
+
+  const handleImport = () => {
+    if (!importFile) { setIoHint('请先选择要导入的 CSV / Parquet 文件'); return; }
+    if (!ioTable) { setIoHint('请选择目标数据表'); return; }
+    setIoBusy(true);
+    setIoHint(null);
+    importData(importFile, ioTable, importMode)
+      .then((r) => {
+        setIoHint(`导入成功：表 ${r.data.table}（${r.data.mode}）写入 ${r.data.imported} 行`);
+        setImportFile(null);
+        setImportFileList([]);
+      })
+      .catch((e: any) =>
+        setIoHint('导入失败：' + (e?.response?.data?.detail || e?.message || '未知错误')))
+      .finally(() => setIoBusy(false));
+  };
+
+  // —— 股票池 ——
+  const loadPool = (targetPage = 1) => {
+    setPoolLoading(true);
+    getPoolList({
+      selected: poolOnlySelected ? true : undefined,
+      query: poolQuery.trim() || undefined,
+      limit: POOL_PAGE_SIZE,
+      offset: (targetPage - 1) * POOL_PAGE_SIZE,
+    })
+      .then((r) => {
+        setPoolRows(r.data.rows);
+        setPoolTotal(r.data.total);
+        setPoolSelectedTotal(r.data.selected_total);
+        setPoolPage(targetPage);
+      })
+      .catch(() => { /* 忽略 */ })
+      .finally(() => setPoolLoading(false));
+  };
+
+  useEffect(() => {
+    loadPool(1);
+    getPoolBuildStatus().then((r) => setPoolBuild(r.data)).catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // 构建状态轮询（running 时每 2s）
+  useEffect(() => {
+    if (poolBuild?.status !== 'running') return;
+    const timer = setInterval(() => {
+      getPoolBuildStatus().then((r) => setPoolBuild(r.data)).catch(() => {});
+    }, 2000);
+    return () => clearInterval(timer);
+  }, [poolBuild?.status]);
+
+  const togglePoolSelect = (code: string, sel: boolean) => {
+    const fn = sel ? selectPool : deselectPool;
+    fn({ codes: [code] })
+      .then(() => loadPool(poolPage))
+      .catch((e: any) => setPoolHint('操作失败：' + (e?.message || '未知错误')));
+  };
+
+  const applyPreset = (preset: string) => {
+    setPoolBusy(true);
+    setPoolHint(null);
+    const fn = preset === 'none' ? deselectPool : selectPool;
+    fn(preset === 'none' ? { preset: 'none' } : { preset })
+      .then(() => { loadPool(1); setPoolHint(`已应用预设：${preset}`); })
+      .catch((e: any) => setPoolHint('预设失败：' + (e?.message || '未知错误')))
+      .finally(() => setPoolBusy(false));
+  };
+
+  const doBuildPool = () => {
+    setPoolBusy(true);
+    setPoolHint(null);
+    buildPool()
+      .then(() => setPoolHint('已触发股票池构建（后台），进度见上方状态'))
+      .catch((e: any) => setPoolHint('触发构建失败：' + (e?.message || '未知错误')))
+      .finally(() => setPoolBusy(false));
+  };
+
+  const doAddPool = () => {
+    const code = addCode.trim();
+    if (!code) { setPoolHint('请填写股票代码'); return; }
+    addPool({ code, name: addName.trim() || undefined })
+      .then(() => { setAddCode(''); setAddName(''); loadPool(1); setPoolHint(`已添加 ${code}`); })
+      .catch((e: any) => setPoolHint('添加失败：' + (e?.message || '未知错误')));
+  };
+
+  const poolColumns = [
+    { title: '代码', dataIndex: 'code', key: 'code', width: 90 },
+    { title: '名称', dataIndex: 'name', key: 'name' },
+    { title: '行业', dataIndex: 'industry', key: 'industry', render: (v: string) => v || <Text type="secondary">—</Text> },
+    { title: '市场', dataIndex: 'exchange', key: 'exchange', width: 70, render: (v: string) => (v || '').toUpperCase() },
+    { title: '来源', dataIndex: 'source', key: 'source', width: 80 },
+    {
+      title: '入选', dataIndex: 'selected', key: 'selected', width: 80,
+      render: (sel: boolean, r: any) => <Switch checked={sel} onChange={(c) => togglePoolSelect(r.code, c)} />,
+    },
+  ];
 
   if (loading) return <div className="page"><Spin size="large" /></div>;
 
@@ -186,6 +356,12 @@ export default function DataManagement() {
     },
   ];
 
+  // 数据表下拉选项（导入目标 / 导出选择）
+  const tableOptions = tables.map((t) => ({
+    value: t.name,
+    label: `[${t.db}] ${t.name}（${t.rows} 行）`,
+  }));
+
   return (
     <div className="page">
       <Title level={3}>数据管理</Title>
@@ -195,6 +371,16 @@ export default function DataManagement() {
         <Space wrap>
           <Button type="primary" loading={importing} onClick={handleFullImport}>
             全量数据导入
+          </Button>
+          <DatePicker
+            placeholder="选择补充的交易日"
+            value={backfillDate}
+            onChange={(d) => setBackfillDate(d)}
+            disabled={importing}
+            style={{ width: 190 }}
+          />
+          <Button loading={importing} onClick={handleBackfill}>
+            按日期补充
           </Button>
           <Button loading={importingBrief} onClick={handleBriefRegen}>
             仅生成简报
@@ -215,7 +401,7 @@ export default function DataManagement() {
               showIcon
               message={
                 lastImport.status === 'triggered'
-                  ? `已提交全量导入请求，请在「运维监控」查看进度`
+                  ? `已提交${lastImport.target_date === '-' ? '全量导入' : `按 ${lastImport.target_date} 补充`}请求，请在「运维监控」查看进度`
                   : lastImport.error
                     ? `导入失败：${lastImport.error}`
                     : `导入完成 · ${lastImport.imported_rows} 条 · ${lastImport.duration_s}s`
@@ -320,6 +506,10 @@ export default function DataManagement() {
             执行完整 12 步流水线：采集行情 → 因子计算 → 情绪分析 → 预测 → 融合 → 简报。
             首次部署或长期未更新后使用。耗时取决于样本域规模（沪深300 约 2 分钟~数小时）。
           </Descriptions.Item>
+          <Descriptions.Item label="按日期补充">
+            指定某交易日（YYYY-MM-DD），仅拉取并重算该日行情与下游（因子/信号/简报等）。
+            适用于补跑错过的交易日或重算特定日，跳过「已新鲜」误判。
+          </Descriptions.Item>
           <Descriptions.Item label="仅生成简报">
             仅重新调用 LLM 生成每日市场简报，不重新跑因子和预测。
             适用于修改 LLM 提示词或密钥后快速刷新。
@@ -333,6 +523,143 @@ export default function DataManagement() {
             行情数据不受影响。⚠️ 不可逆，需重跑完整流水线。
           </Descriptions.Item>
         </Descriptions>
+      </Card>
+
+      {/* 数据导入 / 导出（CSV / Parquet）*/}
+      <Card className="metric-card" title="数据导入 / 导出（CSV / Parquet）" style={{ marginTop: 16 }}>
+        <Alert
+          type="info"
+          showIcon
+          style={{ marginBottom: 12 }}
+          message="导入支持把外部下载的全量数据写入本系统；导出可把整表分享为文件。"
+          description="CSV/Parquet 均会自动校验列与主键，并强制类型（如股票代码保留前导零、时间戳保留时分秒）。"
+        />
+        <Space wrap style={{ marginBottom: 12 }}>
+          <Select
+            style={{ width: 280 }}
+            placeholder="选择目标数据表"
+            value={ioTable}
+            onChange={setIoTable}
+            showSearch
+            optionFilterProp="label"
+            options={tableOptions}
+          />
+          <Upload
+            accept=".csv,.parquet"
+            maxCount={1}
+            fileList={importFileList}
+            beforeUpload={(file) => {
+              setImportFile(file);
+              setImportFileList([{ uid: (file as any).uid || '-1', name: file.name }]);
+              return false;
+            }}
+            onRemove={() => { setImportFile(null); setImportFileList([]); }}
+          >
+            <Button>选择文件 (CSV / Parquet)</Button>
+          </Upload>
+          <Radio.Group
+            value={importMode}
+            onChange={(e) => setImportMode(e.target.value)}
+            optionType="button"
+            buttonStyle="solid"
+          >
+            <Radio value="upsert">upsert（幂等）</Radio>
+            <Radio value="replace">replace（清空后写入）</Radio>
+          </Radio.Group>
+          <Button type="primary" loading={ioBusy} onClick={handleImport}>
+            导入
+          </Button>
+        </Space>
+
+        <Space wrap>
+          <Text type="secondary">导出：</Text>
+          <Button onClick={() => doExport(ioTable, 'csv')} disabled={!ioTable || ioBusy}>导出CSV</Button>
+          <Button onClick={() => doExport(ioTable, 'parquet')} disabled={!ioTable || ioBusy}>导出Parquet</Button>
+        </Space>
+
+        {ioHint && <Alert type="info" showIcon style={{ marginTop: 12 }} message={ioHint} />}
+      </Card>
+
+      {/* 股票池（全量候选主表 + 自选子集）*/}
+      <Card className="metric-card" title="股票池（全量候选 + 自选子集）" style={{ marginTop: 16 }}>
+        <Space wrap style={{ marginBottom: 12 }}>
+          <Button type="primary" loading={poolBusy} onClick={doBuildPool}>构建全量股票池</Button>
+          <Text type="secondary">共 {poolTotal} 只 / 已选 {poolSelectedTotal} 只</Text>
+        </Space>
+
+        {poolBuild && (
+          <Alert
+            style={{ marginBottom: 12 }}
+            type={poolBuild.status === 'failed' ? 'error' : poolBuild.status === 'success' ? 'success' : 'info'}
+            showIcon
+            message={`构建状态：${poolBuild.status}`}
+            description={poolBuild.message}
+          />
+        )}
+
+        <Space wrap style={{ marginBottom: 12 }}>
+          <Text type="secondary">预设子集：</Text>
+          <Button size="small" onClick={() => applyPreset('all')}>全选</Button>
+          <Button size="small" onClick={() => applyPreset('none')}>全不选</Button>
+          <Button size="small" onClick={() => applyPreset('hs300')}>沪深300</Button>
+          <Button size="small" onClick={() => applyPreset('cyb')}>创业板</Button>
+          <Button size="small" onClick={() => applyPreset('kcb')}>科创板</Button>
+          <Button size="small" onClick={() => applyPreset('sh_main')}>沪主板</Button>
+          <Button size="small" onClick={() => applyPreset('sz_main')}>深主板</Button>
+        </Space>
+
+        <Space wrap style={{ marginBottom: 12 }}>
+          <Input
+            placeholder="搜索代码/名称"
+            style={{ width: 160 }}
+            value={poolQuery}
+            onChange={(e) => setPoolQuery(e.target.value)}
+            onPressEnter={() => loadPool(1)}
+            allowClear
+          />
+          <Button onClick={() => loadPool(1)}>搜索</Button>
+          <Select
+            style={{ width: 130 }}
+            value={poolOnlySelected ? 'sel' : 'all'}
+            onChange={(v) => { setPoolOnlySelected(v === 'sel'); loadPool(1); }}
+            options={[
+              { value: 'all', label: '全部' },
+              { value: 'sel', label: '仅已选' },
+            ]}
+          />
+          <Input
+            placeholder="代码"
+            style={{ width: 110 }}
+            value={addCode}
+            onChange={(e) => setAddCode(e.target.value)}
+          />
+          <Input
+            placeholder="名称(可选)"
+            style={{ width: 130 }}
+            value={addName}
+            onChange={(e) => setAddName(e.target.value)}
+          />
+          <Button onClick={doAddPool}>添加</Button>
+        </Space>
+
+        {poolHint && <Alert type="info" showIcon style={{ marginBottom: 12 }} message={poolHint} />}
+
+        <Table
+          size="small"
+          bordered
+          scroll={{ x: 'max-content' }}
+          loading={poolLoading}
+          columns={poolColumns}
+          dataSource={poolRows}
+          rowKey="code"
+          pagination={{
+            current: poolPage,
+            pageSize: POOL_PAGE_SIZE,
+            total: poolTotal,
+            showTotal: (t) => `共 ${t} 只`,
+            onChange: (p) => loadPool(p),
+          }}
+        />
       </Card>
 
       {/* 清库确认弹窗 */}

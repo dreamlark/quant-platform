@@ -117,9 +117,28 @@ export interface UpdateStatus {
 }
 
 // —— 运维控制端点 ——
-// 触发一轮数据更新与预测（异步；已在运行时返回 409）
-export function triggerUpdate() {
-  return api.post<{ status: string; message: string }>('/admin/update');
+// 触发一轮数据更新与预测（异步；已在运行时返回 409）。
+// target_date 命中时进入「按日期补充」模式，仅拉取并重算该交易日。
+export function triggerUpdate(target_date?: string) {
+  const params = new URLSearchParams();
+  if (target_date) params.append('target_date', target_date);
+  const qs = params.toString() ? `?${params}` : '';
+  return api.post<{ status: string; message: string; target_date?: string }>(
+    `/admin/update${qs}`
+  );
+}
+
+// —— 数据表元信息（用于导入/导出目标表选择）——
+export interface DataTableMeta {
+  db: string;          // market | analytics
+  name: string;
+  rows: number | null;
+  columns: string[];
+  latest_date: string | null;
+}
+
+export function getDataTables() {
+  return api.get<{ tables: DataTableMeta[] }>('/data/tables');
 }
 
 // 查询当前更新/调度状态
@@ -422,4 +441,105 @@ export function migratePaths(newDataDir: string) {
     null,
     { params: { new_data_dir: newDataDir } }
   );
+}
+
+// —— 股票池（全量候选主表 + 用户自选子集）——
+export interface PoolRow {
+  code: string;
+  name: string;
+  industry: string;
+  exchange: string;
+  list_date: string | null;
+  delisted: boolean;
+  source: string;
+  selected: boolean;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
+export interface PoolListResult {
+  rows: PoolRow[];
+  total: number;
+  selected_total: number;
+  limit: number;
+  offset: number;
+}
+
+export interface PoolBuildStatus {
+  status: string;        // idle | running | success | failed
+  message: string;
+  count: number | null;
+  updated_at: string | null;
+}
+
+export function getPoolList(params: {
+  selected?: boolean;
+  query?: string;
+  limit?: number;
+  offset?: number;
+}) {
+  const q = new URLSearchParams();
+  if (params.selected !== undefined) q.set('selected', String(params.selected));
+  if (params.query) q.set('query', params.query);
+  if (params.limit) q.set('limit', String(params.limit));
+  if (params.offset) q.set('offset', String(params.offset));
+  return api.get<PoolListResult>(`/pool/list?${q.toString()}`);
+}
+
+export function buildPool() {
+  return api.post<{ status: string; message: string }>('/pool/build');
+}
+
+export function getPoolBuildStatus() {
+  return api.get<PoolBuildStatus>('/pool/build/status');
+}
+
+export function selectPool(body: { preset?: string; codes?: string[]; industry?: string }) {
+  return api.post<{ selected: number }>('/pool/select', body);
+}
+
+export function deselectPool(body: { preset?: string; codes?: string[]; industry?: string }) {
+  return api.post<{ deselected: number }>('/pool/deselect', body);
+}
+
+export function addPool(body: { code: string; name?: string; industry?: string; exchange?: string }) {
+  return api.post<{ added: number; code: string }>('/pool/add', body);
+}
+
+// —— 数据导入/导出（CSV / Parquet）——
+export interface ImportResult {
+  imported: number;
+  table: string;
+  mode: string;
+}
+
+// 导入 CSV/Parquet 到指定表
+// mode=upsert：按主键幂等写入（重复导入不丢已有数据）
+// mode=replace：先清空该表再全量写入（用于导入完整快照）
+export function importData(file: File, table: string, mode: 'upsert' | 'replace') {
+  const form = new FormData();
+  form.append('file', file);
+  form.append('table', table);
+  form.append('mode', mode);
+  return api.post<ImportResult>('/data/import', form, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  });
+}
+
+// 导出整表为 CSV / Parquet（直接触发浏览器下载）
+export function exportData(table: string, format: 'csv' | 'parquet') {
+  return api
+    .get(`/data/export?table=${encodeURIComponent(table)}&format=${format}`, {
+      responseType: 'blob',
+    })
+    .then((resp) => {
+      const url = window.URL.createObjectURL(new Blob([resp.data]));
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${table}.${format}`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+    });
 }
